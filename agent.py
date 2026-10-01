@@ -13,10 +13,54 @@ Build and test your three tools in `tools.py` first. Then come here.
     python agent.py          runs both example paths below
 """
 
+import re
+
 import config
 import trace
 from tools import search_listings, suggest_outfit, create_fit_card
 from generate import ModelUnavailable
+
+
+# ── reading the query ───────────────────────────────────────────
+
+# Regex, not the model: parsing is deterministic, it costs no call, and a
+# wrong answer here is something you can see rather than something you have to
+# re-run five times to catch.
+
+_PRICE_RE = re.compile(r"(?:under|below|less than|max|up to)?\s*\$\s*(\d+(?:\.\d+)?)", re.I)
+# Longest alternatives first, or "XXS" matches as "XS" and "XL" as "L".
+_SIZE_RE = re.compile(
+    r"\bsize\s+("
+    r"xxs|xxl|xs|xl|s/m|m/l|l/xl|s|m|l"
+    r"|us\s*\d+(?:\.\d+)?|w\d+|\d+(?:\.\d+)?"
+    r")\b",
+    re.I,
+)
+
+
+def parse_query(query: str) -> dict:
+    """
+    Pull a description, a size and a price ceiling out of what the user typed.
+
+    Returns a dict with 'description', 'size' and 'max_price'. Size and price
+    are None when the query didn't mention them.
+    """
+    text = query or ""
+
+    max_price = None
+    price_hit = _PRICE_RE.search(text)
+    if price_hit:
+        max_price = float(price_hit.group(1))
+        text = text[: price_hit.start()] + " " + text[price_hit.end() :]
+
+    size = None
+    size_hit = _SIZE_RE.search(text)
+    if size_hit:
+        size = size_hit.group(1).strip()
+        text = text[: size_hit.start()] + " " + text[size_hit.end() :]
+
+    description = " ".join(text.split())
+    return {"description": description, "size": size, "max_price": max_price}
 
 
 # ── session state ─────────────────────────────────────────────────────────────
@@ -106,10 +150,69 @@ def run_agent(query: str, wardrobe: dict) -> dict:
         than a stack trace. The import is already at the top of this file.
     """
     session = new_session(query, wardrobe)
+    count = 0
 
-    # TODO: delete these two lines and build the loop.
-    session["error"] = "The planning loop isn't built yet — see the TODO in agent.py."
+    # The loop picks its next step by reading the session, not by running a
+    # fixed list. `step` is what it decided to do next; "done" ends the run.
+    step = "parse"
+
+    while step != "done":
+        count += 1
+        trace.check_iterations(count)
+
+        if step == "parse":
+            session["parsed"] = parse_query(query)
+            step = "search"
+
+        elif step == "search":
+            parsed = session["parsed"]
+            session["search_results"] = search_listings(
+                parsed["description"],
+                size=parsed["size"],
+                max_price=parsed["max_price"],
+            )
+            # THE BRANCH: nothing came back, so there is nothing to style.
+            if not session["search_results"]:
+                session["error"] = _no_results_message(session["parsed"])
+                return session
+            step = "select"
+
+        elif step == "select":
+            session["selected_item"] = session["search_results"][0]
+            step = "outfit"
+
+        elif step == "outfit":
+            session["outfit_suggestion"] = suggest_outfit(
+                session["selected_item"], session["wardrobe"]
+            )
+            # Branch again: no outfit text means no caption worth writing.
+            step = "fit_card" if (session["outfit_suggestion"] or "").strip() else "done"
+
+        elif step == "fit_card":
+            session["fit_card"] = create_fit_card(
+                session["outfit_suggestion"], session["selected_item"]
+            )
+            step = "done"
+
+        else:
+            session["error"] = f"The loop reached an unknown step: {step!r}."
+            return session
+
     return session
+
+
+def _no_results_message(parsed: dict) -> str:
+    """Say what the user could change, not just that there was nothing."""
+    loosen = []
+    if parsed.get("max_price") is not None:
+        loosen.append(f"raising the ${parsed['max_price']:.0f} ceiling")
+    if parsed.get("size"):
+        loosen.append(f"dropping the size {parsed['size']} filter")
+    if parsed.get("description"):
+        loosen.append(f"using fewer words than \"{parsed['description']}\"")
+
+    tail = "; ".join(loosen) if loosen else "describing the item differently"
+    return f"Nothing in the 40 listings matched. Try {tail}."
 
 
 # ── running it directly ───────────────────────────────────────────────────────
