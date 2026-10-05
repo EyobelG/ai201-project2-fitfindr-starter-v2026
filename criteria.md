@@ -24,10 +24,10 @@ data earns credit; *"80% seemed reasonable"* does not.
 Given a query that matches at least one listing, the agent completes all three
 tool calls and returns a fit card — in at least 4 of 5 tries.
 
-**Why this target:**
-<!-- Why 4 of 5 and not 5 of 5? Something about your search, probably —
-     "my search is a plain keyword match and some phrasings will miss" is a
-     real answer. -->
+**Why this target:** The search is keyword overlap, not a model. "jumper",
+"sweater" and "trainers" all return zero even though the data holds two
+crewnecks, a cardigan and four pairs of shoes. Whether a query lands depends on
+phrasing, so 4 of 5 — 5 of 5 would claim a synonym vocabulary I didn't build.
 
 ---
 
@@ -36,67 +36,56 @@ tool calls and returns a fit card — in at least 4 of 5 tries.
 Given a query that matches no listings, the agent stops before calling
 `suggest_outfit` and returns a message naming what to change — 5 of 5 tries.
 
-**Why this target:**
-<!-- Why is 5 of 5 reasonable here when criterion 1 isn't? What's different
-     about this path? -->
+**Why this target:** This path never reaches the model — regex parse, Python
+filter, branch on an empty list. Nothing in it varies between runs. A branch
+that works 4 times out of 5 is a broken branch, so 5 of 5.
 
 ---
 
-## 3. Something about state
+## 3. The item the search picked is the item the card describes
 
-<!-- YOU WRITE THIS ONE.
+Across 5 runs of a matching query, `session["selected_item"]["id"]` equals
+`session["search_results"][0]["id"]`, and the price and platform printed in
+`session["fit_card"]` are the ones on that same item — 5 of 5.
 
-     How would you know that the item your search found is the same item the
-     next tool received? Name something countable or observable.
-
-     This is the criterion people find hardest, because state failure doesn't
-     look like state failure — it looks like a tool problem. Something that
-     compares session["selected_item"] against what actually reached
-     suggest_outfit is the shape you're after. -->
-
-
-
-**Why this target:**
-
-
+**Why this target:** The id half is plain assignment — anything under 5 of 5
+means the loop overwrote state. Price and platform come through the card
+verbatim; titles get paraphrased, so they'd fail for reasons that aren't state.
 
 ---
 
-## 4. Something about the fit card
+## 4. Fit cards are in-spec and not repeats
 
-<!-- YOU WRITE THIS ONE.
+Run the same item 5 times with the cache off. Each card is 2 to 4 sentences and
+names the price and the platform once each — in at least 4 of 5. Across those
+5 cards, no two share an opening sentence — 5 of 5.
 
-     The fit card calls a model, so the same input can produce different words
-     each time. That's not a bug — it's the nature of the tool. So what would
-     make it acceptable?
+The price counts as named whether it reads `$18` or `$18.0`; the platform
+counts on the name alone, any capitalisation.
 
-     Think about what you'd actually be unhappy to see. A caption that never
-     mentions the price? Two different items producing the same opening
-     sentence? A card longer than a caption anyone would post? Any of those can
-     be turned into a number. -->
-
-
-
-**Why this target:**
-
-
+**Why this target:** Sentence count and the two mentions are prompt
+instructions, not code — at `TEMPERATURE = 0.9` one miss in five is the cost of
+a caption that doesn't read like a listing. The opening-sentence check is 5 of
+5 because identical wording means the cache or the temperature is wrong, which
+is a config bug, not variance.
 
 ---
 
-## 5. Your choice
+## 5. The outfit never names a garment the user doesn't own
 
-<!-- YOU WRITE THIS ONE TOO.
+Given a non-empty wardrobe, every garment named in `session["outfit_suggestion"]`
+appears in `wardrobe["items"]` — in at least 4 of 5 runs. Scored by reading the
+outfit and listing each piece it names; a piece counts as owned if its wardrobe
+`name` is recognisable in the sentence ("Chunky white sneakers" named as "the
+chunky white sneakers" counts, "white sneakers" with no such item does not).
+The new item itself doesn't count — it's the thing being styled.
 
-     Pick something you actually care about getting right. Speed, the empty
-     wardrobe path, what happens when the model can't be reached, whether the
-     search respects a price ceiling — anything, as long as it names a number
-     or an observable outcome. -->
-
-
-
-**Why this target:**
-
-
+**Why this target:** "Never invent a piece that is not on the list" is a line in
+a system prompt, and a model that wants a complete outfit will reach for a belt
+nobody owns. 4 of 5 rather than 5 of 5 because the only thing stopping it is
+wording — if I wanted 5 of 5 I'd have to check the output in code and retry,
+which I haven't built. This is the failure that matters most here: advice naming
+clothes you don't have is worse than no advice.
 
 ---
 
@@ -107,7 +96,7 @@ Given a query that matches no listings, the agent stops before calling
      revise it, and that earns credit. But never delete or edit the original
      line. Add the revision underneath it, like this:
 
-         ## 4. Something about the fit card
+         ## 4. Fit cards are in-spec and not repeats
 
          The fit card is different every time.
 
