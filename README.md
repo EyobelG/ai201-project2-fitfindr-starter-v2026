@@ -122,11 +122,24 @@ lists its longest alternatives first — with `xs` ahead of `xxs`, "size XXS"
 parses as `XS` and the filter quietly searches for the wrong thing. That one
 cost me a debugging pass.
 
-**What moves through the session:** `parsed` → `search_results` →
-`selected_item` → `outfit_suggestion` → `fit_card`. Every step writes its result
-into the session and the next step reads it back out, so a whole run is one
-printable dict. If the branch fires, `error` is set and everything after
-`search_results` stays None.
+**What moves through the session:** Every step writes its result into the
+session and the next step reads it back out, in this order:
+
+| Field | Written by | Holds |
+|---|---|---|
+| `query` | `new_session` | what the user typed |
+| `parsed` | `parse_query` | `description`, `size`, `max_price` |
+| `search_results` | `search_listings` | list of listing dicts, best first |
+| `selected_item` | the loop | `search_results[0]` |
+| `wardrobe` | `new_session` | passed in by the caller |
+| `outfit_suggestion` | `suggest_outfit` | str |
+| `fit_card` | `create_fit_card` | str |
+| `error` | the loop | set only when the branch fires |
+
+Nothing is passed from one call straight into the next, so a whole run is one
+printable dict rather than a chain of variables I've already overwritten. If
+the branch fires, `error` is set and everything from `selected_item` down stays
+None.
 
 The loop isn't three calls in a row — it holds a `step` variable and each pass
 decides the next step from what's in the session. `trace.check_iterations(count)`
@@ -137,57 +150,128 @@ runs at the top of every pass, so a step that never advances trips
 
 ## Sample Run
 
-<!-- Two things go here.
-
-     1. One FULL query and its output, pasted as text.
-     2. Your three per-tool terminal tests — the command and what it printed. -->
-
 **One full query**
 
 ```
-$ python app.py ask '...'
+$ python app.py ask 'vintage graphic tee under $30'
+
+  Found:    Y2K Baby Tee — Butterfly Print — $18.0 on depop
+
+  Outfit:   Pair the Y2K Baby Tee — Butterfly Print with your Baggy straight-leg jeans, dark wash and Chunky white sneakers for a classic, nostalgic streetwear look. Layer your Vintage black denim jacket over top and accessorize with the Black crossbody bag to complete the outfit.
+
+  Fit card: Found this absolute dream of a butterfly print baby tee on Depop for just $18 and I am never taking it off. It's giving total early 2000s mall-rat energy, especially paired with baggy dark wash denim and chunky kicks. Major nostalgia in the best way possible!
+
+0 model calls this session, 2 served from cache
+```
+
+The price and the platform in the card — `$18`, Depop — are the ones on
+`lst_002`, the item the search picked. That is the state criterion passing in
+the one place a user can see it.
+
+**The empty-search branch, same command**
 
 ```
+$ python app.py ask 'designer ballgown size XXS under $5'
+
+  Nothing in the 40 listings matched. Try raising the $5 ceiling; dropping the size XXS filter; using fewer words than "designer ballgown".
+
+0 model calls this session
+```
+
+Zero model calls on that run is the branch working: the loop stopped before
+`suggest_outfit`, so neither model tool was reached.
 
 **The three tools, tested one at a time**
 
 ```
-$ python -c "from tools import search_listings; print(search_listings('graphic tee', max_price=30))"
+$ python -c "
+from tools import search_listings
+r = search_listings('graphic tee', size='M', max_price=30)
+print(len(r), 'matches')
+for x in r[:3]: print(x['id'], x['title'], x['price'], x['size'], x['platform'])
+print(search_listings('ballgown', size='XXS', max_price=5.0))
+"
 
+2 matches
+lst_002 Y2K Baby Tee — Butterfly Print 18.0 S/M depop
+lst_017 Mesh Long-Sleeve Top — Black 15.0 S/M depop
+[]
 ```
 
-```
-$ python -c "from tools import suggest_outfit; ..."
+Both halves of the spec in one command: real matches with `size='M'` landing on
+`S/M` items — token matching, not substring — and `[]` rather than None or a
+crash when nothing survives the filters.
 
 ```
+$ python -c "
+from tools import search_listings, suggest_outfit
+from utils.data_loader import get_example_wardrobe, get_empty_wardrobe
+item = search_listings('graphic tee', max_price=30)[0]
+print('OUTFIT:', suggest_outfit(item, get_example_wardrobe()))
+print('EMPTY-WARDROBE:', suggest_outfit(item, get_empty_wardrobe()))
+"
+
+OUTFIT: Pair the Y2K Baby Tee — Butterfly Print with your Baggy straight-leg jeans, dark wash and Chunky white sneakers for a classic, nostalgic streetwear look. Layer your Vintage black denim jacket over top and accessorize with the Black crossbody bag to complete the outfit.
+EMPTY-WARDROBE: Since your wardrobe is currently empty, I'll share some general ideas for how you could style this adorable butterfly baby tee. You could lean fully into the Y2K aesthetic by pairing it with low-rise baggy cargo pants and chunky platform sneakers. Alternatively, for a cute cottagecore twist, try tucking it into a tiered denim mini skirt and adding pastel butterfly hair clips.
+```
+
+Every piece in the first answer — the baggy straight-leg jeans, the chunky white
+sneakers, the vintage black denim jacket, the black crossbody bag — is a
+wardrobe item by its stored name, which is criterion 5. The empty wardrobe gets
+general advice and says why it's general, instead of naming clothes nobody owns.
 
 ```
-$ python -c "from tools import create_fit_card; ..."
+$ python -c "
+from tools import search_listings, suggest_outfit, create_fit_card
+from utils.data_loader import get_example_wardrobe
+item = search_listings('graphic tee', max_price=30)[0]
+outfit = suggest_outfit(item, get_example_wardrobe())
+print('CARD:', create_fit_card(outfit, item))
+print('CARD-EMPTY-OUTFIT:', create_fit_card('   ', item))
+"
 
+CARD: Found this absolute dream of a butterfly print baby tee on Depop for just $18 and I am never taking it off. It's giving total early 2000s mall-rat energy, especially paired with baggy dark wash denim and chunky kicks. Major nostalgia in the best way possible!
+CARD-EMPTY-OUTFIT: No fit card — there is no outfit to write about. suggest_outfit() returned nothing.
 ```
+
+Three sentences, the price and the platform once each, and the whitespace-only
+outfit returns the fixed string without making a model call.
 
 ---
 
 ## How I Used AI
 
-<!-- Two specific moments. What you asked, what came back, what you changed.
+**Moment 1 — I had it attack my criteria instead of write them**
 
-     "I used Claude to help me code" is not enough.
+- *What I asked for:* I pasted my three draft criteria into Claude with the
+  prompt from Milestone 3 — tell me exactly how you'd test each one using only
+  what the sentence says, don't suggest improvements.
+- *What came back:* It turned criteria 3 and 5 into tests without trouble. For
+  my fit-card criterion, which at that point said the card should be "different
+  each time and read naturally," it said it had no way to score either half:
+  two cards differing by one word are different, and "naturally" is a judgment
+  with no procedure attached.
+- *What I changed:* I rewrote criterion 4 into things that can be counted — 2
+  to 4 sentences, the price and the platform named once each, no two of five
+  cards sharing an opening sentence — and split the targets, 4 of 5 for the
+  prompt-driven parts and 5 of 5 for the opening-sentence check, because
+  identical wording is a config bug rather than variance.
 
-     "I gave Claude my search_listings spec. It returned None on no match
-     instead of an empty list, so I changed it" is the level we want. -->
+**Moment 2 — size matching, where it gave me the wrong shape first**
 
-**Moment 1**
-
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
-
-**Moment 2**
-
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+- *What I asked for:* I gave Claude my `search_listings` spec and the list of
+  size strings in the data (`S`, `M`, `S/M`, `US 8`, `W30 L30`, `One Size`) and
+  asked for the filter.
+- *What came back:* A one-liner doing `size.lower() in listing["size"].lower()`.
+  I ran it with `size="S"` and it returned `US 9` sneakers and an `XL` jacket,
+  because `"s"` is a substring of both. It had also written `return None` for
+  the no-match case, against the empty list my spec names.
+- *What I changed:* Replaced the substring test with token matching — strip
+  parenthetical notes and the `US` prefix, split on slashes and whitespace,
+  compare whole tokens, treat `One Size` as matching anything — and made the
+  no-match case `[]`, which is what the loop's branch checks. Writing the empty
+  case into the spec first is why I caught the `None` instead of debugging the
+  branch later.
 
 <!-- ═══════════════════════ UNIT 4 — THE TEST ═══════════════════════
 
