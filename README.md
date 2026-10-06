@@ -273,6 +273,55 @@ outfit returns the fixed string without making a model call.
   case into the spec first is why I caught the `None` instead of debugging the
   branch later.
 
+
+---
+
+## Stretch Features
+
+Three stretch items, declared here before I built them. Each one names what it
+is, what it returns or changes, and where the evidence for it sits further down
+this file.
+
+**1. A fourth tool — `compare_prices`**
+
+A fourth tool beyond the three required: it reads the listings data and tells
+you whether the item the search picked is dear or cheap for its category. No
+model call, so it costs nothing and it is testable the way `search_listings`
+is. Returns a dict with the category, the item's price, the category median,
+how many listings undercut it, and the two cheapest of those. Lives in
+`tools.py::compare_prices`, called from the loop as its own step. Evidence:
+**Stretch 1 — the fourth tool in a run** below.
+
+**2. A second branch — the price branch**
+
+The loop already branches on an empty search. This is a second condition, and a
+different one: when `compare_prices` says the item sits above its category
+median *and* names at least one cheaper listing, the loop takes an extra step
+that writes `session["price_note"]`, and the fit card is told about it. When the
+item is at or below the median, that step is skipped and `price_note` stays
+None. Both paths end in a fit card, so the difference is visible in the output
+rather than in whether there is any.
+
+It deliberately does **not** change `selected_item`. Swapping in the cheaper
+listing was the first thing I tried, and it breaks criterion 3 — the item the
+search picked would stop being the item the card describes. The branch adds
+context to the card instead of overriding the choice. Evidence: **Stretch 2 —
+both paths of the price branch** below.
+
+**3. Style memory**
+
+The agent remembers a wardrobe between runs. `python app.py ask --remember`
+loads the wardrobe saved on disk at `data/wardrobe_saved.json` rather than the
+example one, and after a successful run it files the item it just styled into
+that wardrobe. The next run sees it as something you own, so the second run's
+outfit is shaped by what the first one stored.
+
+Opt-in on purpose. Without `--remember` the agent loads the example wardrobe
+exactly as it did before, because my five criteria are written against that
+wardrobe and a run that quietly grew its own inputs would make them
+unmeasurable. Evidence: **Stretch 3 — two runs, the second shaped by the
+first** below.
+
 <!-- ═══════════════════════ UNIT 4 — THE TEST ═══════════════════════
 
      Don't fill these in during unit 3.
