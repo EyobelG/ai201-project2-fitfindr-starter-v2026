@@ -97,6 +97,22 @@ different prompt rather than the same prompt with a blank in it.
 - **Returns:** A str of two to four sentences, mentioning the item, its price and its platform once each.
 - **When it has nothing:** An empty or whitespace-only `outfit` returns the fixed string `"No fit card — there is no outfit to write about. suggest_outfit() returned nothing."` and makes no model call.
 
+`create_fit_card` takes a third argument, `price_note` (str or None), added for
+the price branch below. On the path where the branch doesn't fire it is None and
+the prompt is exactly what it was before the branch existed.
+
+### `compare_prices` — the fourth tool (stretch 1)
+
+- **What it does:** Reads the listings data and says where one item's price sits against the rest of its category. No model call.
+- **Inputs:** `new_item` (dict) — one listing dict, normally `session["selected_item"]`.
+- **Returns:** A dict with `category` (str), `price` (float), `median` (float), `cheaper_count` (int), `total` (int), `verdict` (str — one of `"above_median"`, `"at_or_below_median"`, `"alone_in_category"`), and `cheaper` (list of up to two dicts, each `{"id", "title", "price"}`, cheapest first).
+- **When it has nothing:** A category holding no other listing returns `verdict: "alone_in_category"`, `median` equal to the item's own price, `cheaper_count: 0` and `cheaper: []`. Never None, never raises — an item whose category isn't in the data is treated as alone.
+
+The median is taken across the category *including* this item, and `cheaper`
+only ever holds listings that genuinely undercut it, which is what makes the
+branch below safe to fire on: if `cheaper` is non-empty there is a real
+alternative to name.
+
 ---
 
 ## Planning Loop
@@ -109,6 +125,21 @@ is never called and `fit_card` stays None. Otherwise take the first result as
 There's a second branch after that one: if `suggest_outfit` comes back blank or
 whitespace, the loop ends without writing a fit card, because a caption about
 nothing is worse than no caption.
+
+**Second branch rule (stretch 2) — the price branch:** After `select`, the loop
+runs `compare_prices` as its own step. If the verdict is `"above_median"` **and**
+`cheaper` is non-empty, it writes `session["price_note"]` and passes that into
+`create_fit_card`, so the caption frames the find as a splurge. If the verdict
+is anything else — at or below the median, or alone in its category — that write
+is skipped, `price_note` stays None, and `create_fit_card` receives None. Both
+paths then continue to the fit card, so what differs is the caption, not whether
+there is one.
+
+`selected_item` is deliberately untouched by this branch. Swapping in the
+cheaper listing was the obvious move and it is wrong here: criterion 3 says the
+item the search picked is the item the card describes, and an override would
+make that false by design. The branch adds context rather than changing the
+choice.
 
 **Where it lives:** `agent.py::run_agent`
 
@@ -131,6 +162,8 @@ session and the next step reads it back out, in this order:
 | `parsed` | `parse_query` | `description`, `size`, `max_price` |
 | `search_results` | `search_listings` | list of listing dicts, best first |
 | `selected_item` | the loop | `search_results[0]` |
+| `price_check` | `compare_prices` | the dict above — category, median, verdict, cheaper |
+| `price_note` | the loop | str, and only when the price branch fires |
 | `wardrobe` | `new_session` | passed in by the caller |
 | `outfit_suggestion` | `suggest_outfit` | str |
 | `fit_card` | `create_fit_card` | str |
@@ -321,6 +354,249 @@ exactly as it did before, because my five criteria are written against that
 wardrobe and a run that quietly grew its own inputs would make them
 unmeasurable. Evidence: **Stretch 3 — two runs, the second shaped by the
 first** below.
+
+
+### Stretch 1 — the fourth tool in a run
+
+`compare_prices` on its own, covering the dear case, the cheap case and the
+empty case. From `tools.py::compare_prices`:
+
+```
+$ python -c "
+from tools import compare_prices
+from utils.data_loader import load_listings
+import json
+L = {x['id']: x for x in load_listings()}
+print(json.dumps(compare_prices(L['lst_022']), indent=2, ensure_ascii=False))
+print(json.dumps(compare_prices(L['lst_002']), indent=2, ensure_ascii=False))
+print(json.dumps(compare_prices({'id':'x','category':'swimwear','price':10.0}), indent=2, ensure_ascii=False))
+"
+
+{
+  "category": "outerwear",
+  "price": 75.0,
+  "median": 41.0,
+  "cheaper_count": 7,
+  "total": 8,
+  "verdict": "above_median",
+  "cheaper": [
+    {
+      "id": "lst_038",
+      "title": "Denim Vest — Medium Wash, Studded",
+      "price": 27.0
+    },
+    {
+      "id": "lst_032",
+      "title": "Shacket — Olive Canvas",
+      "price": 33.0
+    }
+  ]
+}
+{
+  "category": "tops",
+  "price": 18.0,
+  "median": 21.0,
+  "cheaper_count": 3,
+  "total": 15,
+  "verdict": "at_or_below_median",
+  "cheaper": [
+    {
+      "id": "lst_017",
+      "title": "Mesh Long-Sleeve Top — Black",
+      "price": 15.0
+    },
+    {
+      "id": "lst_020",
+      "title": "Henley Long Sleeve — Washed Burgundy",
+      "price": 16.0
+    }
+  ]
+}
+{
+  "category": "swimwear",
+  "price": 10.0,
+  "median": 10.0,
+  "cheaper_count": 0,
+  "total": 1,
+  "verdict": "alone_in_category",
+  "cheaper": []
+}
+```
+
+The bomber is the dearest outerwear in the data at $75 against a $41 median, so
+`verdict` is `above_median` and seven listings undercut it. The baby tee at $18
+sits under the $21 tops median, so it comes back `at_or_below_median` — and
+`cheaper` is still populated there, which is why the branch tests the verdict
+rather than just checking whether `cheaper` has anything in it. The third call
+passes a category that doesn't exist in the data at all and gets
+`alone_in_category` rather than a `StatisticsError` from taking the median of an
+empty list.
+
+**And the agent calling it.** The run below is the whole loop, and the step
+order is `parse → search → select → price_check → outfit → fit_card`. The
+`price_check` step is the fourth tool; the note it produced is what shaped the
+caption.
+
+### Stretch 2 — both paths of the price branch
+
+Same command, two items, one branch. The condition is `verdict ==
+"above_median" and cheaper` — in `agent.py::run_agent`, the `price_check` step.
+
+**The path where it fires** — the bomber, $75 against a $41 median:
+
+```
+$ AI201_CACHE=0 python app.py ask '90s leather bomber'
+
+  Found:    90s Leather Bomber — Black — $75.0 on depop
+
+  Outfit:   Layer the 90s Leather Bomber over the white ribbed tank top and pair them with the baggy straight-leg jeans, dark wash. Finish the look with the chunky white sneakers and the black crossbody bag for an effortless 90s streetwear vibe.
+
+  Fit card: Totally caved and splurged $75 on this buttery vintage leather bomber on Depop, but honestly, look at it. Threw it on over a beat-up white tank and baggy dark wash denim for the ultimate heavy-metal-off-duty-model energy. It's properly heavy and worn in just right—worth every single penny.
+
+2 model calls this session, 553 prompt + 124 output tokens
+```
+
+**The path where it doesn't** — the baby tee, $18 against a $21 median:
+
+```
+$ AI201_CACHE=0 python app.py ask 'vintage graphic tee under $30'
+
+  Found:    Y2K Baby Tee — Butterfly Print — $18.0 on depop
+
+  Outfit:   Pair the Y2K Baby Tee — Butterfly Print with your baggy straight-leg jeans and chunky white sneakers for a classic noughties street style look. Layer the Vintage black denim jacket over top and accessorize with your black crossbody bag to complete the outfit.
+
+  Fit card: Obsessed with this little butterfly tee I just scored on Depop for only $18! It’s giving total early 2000s pop star off-duty, especially when paired with baggy jeans and chunky sneakers. Threw on a black denim jacket to toughen it up a bit—can't wait to live in this all summer.
+
+2 model calls this session, 470 prompt + 124 output tokens
+```
+
+The branch is visible in the two cards. The first one opens on "totally caved
+and splurged" and closes on "worth every single penny" — that framing is the
+`price_note` reaching the prompt. The second never mentions value at all,
+because `price_note` was None and `create_fit_card` got the prompt it always
+had. The note itself, which the caption paraphrases rather than quotes:
+
+```
+$ python -c "
+from agent import run_agent
+from utils.data_loader import get_example_wardrobe
+s = run_agent('90s leather bomber', get_example_wardrobe())
+print('verdict:   ', s['price_check']['verdict'])
+print('price_note:', s['price_note'])
+print('selected_item is still search_results[0]:',
+      s['selected_item']['id'] == s['search_results'][0]['id'])
+"
+
+verdict:    above_median
+price_note: $75 is above the $41 median for outerwear; 7 of 8 are cheaper, the lowest being Denim Vest — Medium Wash, Studded at $27.
+selected_item is still search_results[0]: True
+```
+
+That last line is the thing I was protecting. The branch had an obvious louder
+version — pick the $27 denim vest instead — and it would have made criterion 3
+false on every run that took it.
+
+### Stretch 3 — two runs, the second shaped by the first
+
+Starting from no saved file, so run 1 falls back to the ten example items.
+
+**Run 1** — styles a pair of cargo pants, then files them:
+
+```
+$ rm -f data/wardrobe_saved.json
+$ AI201_CACHE=0 python app.py ask --remember 'low-rise cargo pants'
+
+(style memory on — 10 items remembered)
+
+  Found:    Low-Rise Cargo Pants — Khaki — $27.0 on poshmark
+
+  Outfit:   Pair the Low-Rise Cargo Pants — Khaki with the fitted White ribbed tank top for a classic Y2K streetwear silhouette. Throw on the Black cropped zip hoodie and finish the outfit with Chunky white sneakers.
+
+  Fit card: My Y2K streetwear dreams are finally coming true thanks to these khaki low-rise cargo pants. I scored them on Poshmark for just $27 and they have the exact slouchy, 2000s pocket-heavy vibe I've been hunting for. Paired with a fitted ribbed tank, a cropped zip hoodie, and chunky sneakers, this fit is peak nostalgic perfection.
+
+  (remembered: Low-Rise Cargo Pants — Khaki — 11 items in your saved wardrobe)
+
+2 model calls this session, 466 prompt + 124 output tokens
+```
+
+**Run 2** — a separate process, styling a different item:
+
+```
+$ AI201_CACHE=0 python app.py ask --remember 'y2k baby tee butterfly'
+
+(style memory on — 11 items remembered)
+
+  Found:    Y2K Baby Tee — Butterfly Print — $18.0 on depop
+
+  Outfit:   Pair the Y2K Baby Tee — Butterfly Print with your Low-Rise Cargo Pants — Khaki and Chunky white sneakers for a nostalgic 2000s streetwear look. Add the Black crossbody bag to complete the outfit.
+
+  Fit card: Found this absolute dream of a butterfly print baby tee on Depop for just $18, and I am obsessed. The Y2K cottagecore energy is so strong, especially paired with low-rise cargos and chunky white sneakers. It's giving major early 2000s mall-goth-meets-fairy vibes and I never want to take it off.
+
+  (remembered: Y2K Baby Tee — Butterfly Print — 12 items in your saved wardrobe)
+
+2 model calls this session, 499 prompt + 124 output tokens
+```
+
+Run 2's outfit names **"your Low-Rise Cargo Pants — Khaki"** — an item that was
+a listing in run 1 and is a wardrobe item by run 2. It isn't just that the
+count went 10 → 11 → 12; the stored item is the one the second outfit reached
+for, over the two pairs of bottoms that were there all along. That is the
+wardrobe shaping the advice.
+
+It worked on this pairing because the cargo pants share `y2k` and `2000s` tags
+with the tee, and the pre-existing bottoms are baggy jeans and khaki trousers.
+Run 1 saving the leather bomber and run 2 styling the same tee gave an outfit
+that ignored the bomber entirely — memory that stores the item but doesn't
+change the answer, which would not have been evidence of anything. Both
+attempts are in my history; this is the one that demonstrates the feature.
+
+What persists, after those two runs:
+
+```
+$ python -c "
+import json
+saved = json.load(open('data/wardrobe_saved.json'))
+print(json.dumps(saved['items'][-2:], indent=2, ensure_ascii=False))
+"
+
+[
+  {
+    "name": "Low-Rise Cargo Pants — Khaki",
+    "category": "bottoms",
+    "colors": [
+      "khaki",
+      "tan"
+    ],
+    "style_tags": [
+      "y2k",
+      "cargo",
+      "2000s",
+      "streetwear"
+    ],
+    "from_listing": "lst_011"
+  },
+  {
+    "name": "Y2K Baby Tee — Butterfly Print",
+    "category": "tops",
+    "colors": [
+      "white",
+      "pink",
+      "purple"
+    ],
+    "style_tags": [
+      "y2k",
+      "vintage",
+      "graphic tee",
+      "cottagecore"
+    ],
+    "from_listing": "lst_002"
+  }
+]
+```
+
+`from_listing` is why re-running the same query doesn't file the item twice, and
+it's how a wardrobe item that came from a find can be told from one that was
+always there.
 
 <!-- ═══════════════════════ UNIT 4 — THE TEST ═══════════════════════
 
