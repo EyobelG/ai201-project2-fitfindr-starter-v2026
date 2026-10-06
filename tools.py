@@ -21,6 +21,7 @@ the description has to say what is *in* the list.
 """
 
 import re
+import statistics
 
 import config  # noqa: F401 — you'll use this in search_listings
 from generate import generate
@@ -240,7 +241,7 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
 
 # ── Tool 3: create_fit_card ───────────────────────────────────────────────────
 
-def create_fit_card(outfit: str, new_item: dict) -> str:
+def create_fit_card(outfit: str, new_item: dict, price_note: str | None = None) -> str:
     """
     Write a short caption someone would actually post about the find.
 
@@ -249,6 +250,10 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
     Args:
         outfit:   the outfit suggestion string from suggest_outfit().
         new_item: the listing dict for the item.
+        price_note: optional one-line price context from the loop's price
+                  branch (stretch 2). None on the path where the branch
+                  didn't fire, and the prompt is then exactly what it was
+                  before the branch existed.
 
     Returns:
         A two-to-four sentence caption.
@@ -292,7 +297,90 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
         f"size {new_item.get('size')}).\n"
         f"Style tags: {', '.join(new_item.get('style_tags') or []) or 'none'}.\n\n"
         f"How they are styling it:\n{outfit.strip()}\n\n"
-        "Write the caption."
+        + (
+            f"Worth knowing about the price: {price_note}\nWork that in as "
+            "part of the find being a splurge, in the caption's own voice. "
+            "Still name the item's own price and the platform once each; just "
+            "don't recite the median or the count.\n\n"
+            if price_note
+            else ""
+        )
+        + "Write the caption."
     )
 
     return generate(prompt, system=system)
+
+
+# ── Tool 4 (stretch): compare_prices ──────────────────────────────────────────
+
+def compare_prices(new_item: dict) -> dict:
+    """
+    Say whether a listing is dear or cheap for its own category.
+
+    The fourth tool, declared in the README's Stretch Features section. Like
+    search_listings it reads the data and makes no model call, so it costs
+    nothing and it can be tested on its own from a terminal.
+
+    Args:
+        new_item: a listing dict — normally session["selected_item"].
+
+    Returns:
+        A dict with:
+            category       (str)        the category it was compared within
+            price          (float)      the item's own price
+            median         (float)      the median price of that category
+            cheaper_count  (int)        how many listings in it undercut this one
+            total          (int)        how many listings are in that category
+            verdict        (str)        "above_median", "at_or_below_median",
+                                        or "alone_in_category"
+            cheaper        (list[dict]) up to two cheapest undercutting listings,
+                                        each {"id", "title", "price"}
+
+    When it has nothing: a category with no other listing in it returns
+    verdict "alone_in_category", median equal to the item's own price,
+    cheaper_count 0 and cheaper []. It never returns None and never raises —
+    an item whose category is missing from the data is treated as alone.
+
+    Test it from a terminal:
+        python -c "from tools import compare_prices; from utils.data_loader import load_listings; print(compare_prices(load_listings()[0]))"
+    """
+    category = (new_item or {}).get("category")
+    price = float((new_item or {}).get("price") or 0.0)
+    item_id = (new_item or {}).get("id")
+
+    peers = [
+        listing for listing in load_listings()
+        if listing.get("category") == category and listing.get("id") != item_id
+    ]
+
+    if not peers:
+        return {
+            "category": category,
+            "price": price,
+            "median": price,
+            "cheaper_count": 0,
+            "total": 1,
+            "verdict": "alone_in_category",
+            "cheaper": [],
+        }
+
+    prices = sorted(float(listing["price"]) for listing in peers + [new_item])
+    median = statistics.median(prices)
+
+    undercutting = sorted(
+        (listing for listing in peers if float(listing["price"]) < price),
+        key=lambda listing: float(listing["price"]),
+    )
+
+    return {
+        "category": category,
+        "price": price,
+        "median": median,
+        "cheaper_count": len(undercutting),
+        "total": len(peers) + 1,
+        "verdict": "above_median" if price > median else "at_or_below_median",
+        "cheaper": [
+            {"id": listing["id"], "title": listing["title"], "price": float(listing["price"])}
+            for listing in undercutting[:2]
+        ],
+    }

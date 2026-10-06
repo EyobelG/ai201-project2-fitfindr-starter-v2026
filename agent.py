@@ -17,7 +17,7 @@ import re
 
 import config
 import trace
-from tools import search_listings, suggest_outfit, create_fit_card
+from tools import search_listings, suggest_outfit, create_fit_card, compare_prices
 from generate import ModelUnavailable
 
 
@@ -84,6 +84,8 @@ def new_session(query: str, wardrobe: dict) -> dict:
         "parsed": {},                # description / size / max_price you pulled out of it
         "search_results": [],        # everything search_listings returned
         "selected_item": None,       # the one you chose — goes into suggest_outfit
+        "price_check": None,         # what compare_prices returned (stretch tool 4)
+        "price_note": None,          # set only when the price branch fires (stretch 2)
         "wardrobe": wardrobe,        # the user's wardrobe
         "outfit_suggestion": None,   # what suggest_outfit returned
         "fit_card": None,            # what create_fit_card returned
@@ -179,6 +181,17 @@ def run_agent(query: str, wardrobe: dict) -> dict:
 
         elif step == "select":
             session["selected_item"] = session["search_results"][0]
+            step = "price_check"
+
+        elif step == "price_check":
+            session["price_check"] = compare_prices(session["selected_item"])
+            # THE SECOND BRANCH: dear for its category, and something cheaper
+            # exists to name. Note it and carry the note into the fit card.
+            # selected_item is left alone on purpose — swapping it here would
+            # break criterion 3.
+            check = session["price_check"]
+            if check["verdict"] == "above_median" and check["cheaper"]:
+                session["price_note"] = _price_note(check)
             step = "outfit"
 
         elif step == "outfit":
@@ -190,7 +203,9 @@ def run_agent(query: str, wardrobe: dict) -> dict:
 
         elif step == "fit_card":
             session["fit_card"] = create_fit_card(
-                session["outfit_suggestion"], session["selected_item"]
+                session["outfit_suggestion"],
+                session["selected_item"],
+                price_note=session["price_note"],
             )
             step = "done"
 
@@ -199,6 +214,17 @@ def run_agent(query: str, wardrobe: dict) -> dict:
             return session
 
     return session
+
+
+def _price_note(check: dict) -> str:
+    """One line on where this price sits, naming the cheapest alternative."""
+    cheapest = check["cheaper"][0]
+    return (
+        f"${check['price']:.0f} is above the ${check['median']:.0f} median for "
+        f"{check['category']}; {check['cheaper_count']} of "
+        f"{check['total']} are cheaper, the lowest being "
+        f"{cheapest['title']} at ${cheapest['price']:.0f}."
+    )
 
 
 def _no_results_message(parsed: dict) -> str:
