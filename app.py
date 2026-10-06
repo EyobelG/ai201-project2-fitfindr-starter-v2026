@@ -104,7 +104,7 @@ def cmd_examples(args):
     )
 
 
-def _ask_one(query, wardrobe, use_trace):
+def _ask_one(query, wardrobe, use_trace, remember=False):
     from agent import run_agent
     import trace as trace_module
 
@@ -125,6 +125,16 @@ def _ask_one(query, wardrobe, use_trace):
         print(f"  Fit card: {session['fit_card']}")
     print()
 
+    # Style memory (stretch 3). Only on --remember, and only when the run
+    # actually produced an item — a run that took the empty-search branch has
+    # nothing to file.
+    if remember and not session["error"] and session["selected_item"]:
+        from utils.data_loader import remember_item
+        saved = remember_item(wardrobe, session["selected_item"])
+        print(f"  (remembered: {session['selected_item']['title']} — "
+              f"{len(saved['items'])} items in your saved wardrobe)")
+        print()
+
     if use_trace:
         text = trace_module.get_trace()
         if not text:
@@ -136,16 +146,25 @@ def _ask_one(query, wardrobe, use_trace):
 
 
 def cmd_ask(args):
-    from utils.data_loader import get_example_wardrobe, get_empty_wardrobe
+    from utils.data_loader import (
+        get_example_wardrobe,
+        get_empty_wardrobe,
+        load_saved_wardrobe,
+    )
     import generate
 
-    wardrobe = get_empty_wardrobe() if args.empty_wardrobe else get_example_wardrobe()
     if args.empty_wardrobe:
+        wardrobe = get_empty_wardrobe()
         print("(running with an empty wardrobe)")
+    elif args.remember:
+        wardrobe = load_saved_wardrobe()
+        print(f"(style memory on — {len(wardrobe['items'])} items remembered)")
+    else:
+        wardrobe = get_example_wardrobe()
 
     try:
         if args.query:
-            _ask_one(args.query, wardrobe, args.trace)
+            _ask_one(args.query, wardrobe, args.trace, remember=args.remember)
         else:
             print("Ask for something, or press Enter on an empty line to quit.\n")
             while True:
@@ -156,7 +175,9 @@ def cmd_ask(args):
                     break
                 if not query:
                     break
-                _ask_one(query, wardrobe, args.trace)
+                session = _ask_one(query, wardrobe, args.trace, remember=args.remember)
+                if args.remember and not session["error"] and session["selected_item"]:
+                    wardrobe = load_saved_wardrobe()
     finally:
         print(generate.usage())
 
@@ -188,6 +209,11 @@ def build_parser():
         "--empty-wardrobe",
         action="store_true",
         help="run as a user with nothing saved — one of unit 4's failure modes",
+    )
+    p_ask.add_argument(
+        "--remember",
+        action="store_true",
+        help="style memory — load the saved wardrobe and file the item styled",
     )
     p_ask.set_defaults(func=cmd_ask)
 
