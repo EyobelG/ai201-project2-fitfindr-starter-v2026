@@ -35,18 +35,47 @@ SCENARIOS = [
         "wardrobe": "empty",
         "criterion": None,
     },
-    # TODO: add what your criteria 3, 4 and 5 need.
-    #
-    # Set "criterion" to the number in criteria.md that the scenario tests.
-    # "criterion": None means a diagnostic run — useful to have, but it isn't
-    # one of your five, and run_eval.py marks it as such in the table.
-    #
-    # For a state criterion, any normal query works — what you're checking is
-    # what ends up in the session, not what the user typed.
-    #
-    # For a fit-card criterion, you probably want the SAME query listed more
-    # than once, or several different items, depending on what your criterion
-    # actually says.
+    {
+        # Criterion 3 — the item the search picked is the item the card
+        # describes. Any matching query will do, because what is being checked
+        # is what ends up in the session, not what the user typed. This one is
+        # used because its top result is stable across runs: the search is
+        # keyword overlap with no model in it, so result [0] does not move.
+        "name": "selected item matches the card",
+        "query": "y2k baby tee butterfly print",
+        "wardrobe": "example",
+        "criterion": 3,
+    },
+    {
+        # Criterion 4 — fit cards in-spec and not repeats. The criterion says
+        # "run the same item 5 times with the cache off", which is exactly
+        # what run_eval.py does to one scenario: five tries, caching off.
+        # Phrased to land on one specific listing so all five cards describe
+        # the same item and the opening-sentence check means something.
+        "name": "same item five times, cards compared",
+        "query": "vintage levi 501 jeans medium wash",
+        "wardrobe": "example",
+        "criterion": 4,
+    },
+    {
+        # Criterion 5 — the outfit never names a garment the user doesn't own.
+        # Needs a non-empty wardrobe and an item the wardrobe can actually be
+        # styled around. An accessory is the harder case on purpose: there is
+        # less in the wardrobe that obviously goes with a bag, which is when a
+        # model is most tempted to invent a piece.
+        "name": "outfit names only owned garments",
+        "query": "tan leather mini shoulder bag",
+        "wardrobe": "example",
+        "criterion": 5,
+    },
+    {
+        # Diagnostic, not one of the five. The price branch firing, so the run
+        # log holds evidence of the second branch under test conditions too.
+        "name": "price branch fires",
+        "query": "chunky brown knit cardigan",
+        "wardrobe": "example",
+        "criterion": None,
+    },
 ]
 
 WARDROBES = ("example", "empty")
