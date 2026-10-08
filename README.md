@@ -864,29 +864,74 @@ machine today.
 
 ## Run Log — Before
 
-<!-- Five criteria, five tries each, in this exact format.
-
-     Five, because your criteria are written out of five. Mark each try PASS
-     or FAIL, count the passes, and read that count against your target — a
-     row targeting 4 of 5 with three PASS cells is MISSED (3/5).
-
-     `python run_eval.py --label before` runs everything and writes the table
-     into results/. Paste it here and fill in the verdicts. -->
+`python run_eval.py --label before` — 7 scenarios, 5 tries each, caching off,
+temperature 0.9, 61 model calls. Full output in
+`results/run_2026-10-07_2234_before.md`, committed alongside this file.
 
 | Criterion | Target | Try 1 | Try 2 | Try 3 | Try 4 | Try 5 | Verdict |
 |---|---|---|---|---|---|---|---|
-| 1.  |  |  |  |  |  |  |  |
-| 2.  |  |  |  |  |  |  |  |
-| 3.  |  |  |  |  |  |  |  |
-| 4.  |  |  |  |  |  |  |  |
-| 5.  |  |  |  |  |  |  |  |
+| 1. A matching query completes all three tools | ≥4 of 5 | PASS | PASS | PASS | PASS | PASS | **MET (5/5)** |
+| 2. An impossible query stops before the second tool | 5 of 5 | PASS | PASS | PASS | PASS | PASS | **MET (5/5)** |
+| 3. The item the search picked is the item the card describes | 5 of 5 | PASS | PASS | PASS | PASS | PASS | **MET (5/5)** |
+| 4. Fit cards in-spec (2–4 sentences, price and platform once each) | ≥4 of 5 | PASS | PASS | PASS | PASS | PASS | **MET (5/5)** |
+| 4b. No two cards share an opening sentence | 5 of 5 | PASS | PASS | PASS | PASS | PASS | **MET (5/5)** |
+| 5. The outfit never names a garment the user doesn't own | ≥4 of 5 | PASS | PASS | PASS | PASS | PASS | **MET (5/5)** |
+| empty wardrobe _(diagnostic — not one of the five)_ | — | advice | advice | advice | advice | advice | n/a |
+| price branch fires _(diagnostic — not one of the five)_ | — | note | note | note | note | note | n/a |
 
-**Real output from one try**, pasted as text, naming the file and function
-that produced it:
+All five met. How each column was decided:
+
+- **1** — `stopped early: no`, and both an outfit and a fit card present. All
+  five produced both.
+- **2** — `stopped early: yes`, and no `[n] suggest_outfit` step in the trace.
+  All five traces end at `[3] branch`.
+- **3** — the title at `[2] search_listings` position 0 equals the title at
+  `[3] select_item`, and the card contains that item's price and platform.
+  `$18` and `depop` appear in all five cards.
+- **4** — sentences counted on `.!?`, then one occurrence each of `$38` and
+  `depop`. Every card came out at exactly 3 sentences with one mention each.
+  Openings compared as exact strings: 5 unique of 5.
+- **5** — read by hand, since "is this garment owned" is not a string match.
+  Across the five tries the outfits name the white ribbed tank top, the
+  wide-leg khaki trousers, the baggy straight-leg jeans and the chunky white
+  sneakers. All four are in the wardrobe. Nothing was invented.
+
+**Real output from one try** — criterion 5, try 1, produced by
+`tools.py::suggest_outfit` and `tools.py::create_fit_card` via
+`agent.py::run_agent`:
 
 ```
+- stopped early: no
+- selected_item: Mini Shoulder Bag — Tan Leather ($38.0, poshmark)
+- search_results: 10
 
+Outfit suggestion:
+
+Pair the mini shoulder bag with the white ribbed tank top and baggy
+straight-leg jeans for a casual, classic look. Complete the outfit with the
+chunky white sneakers to tie the vintage streetwear vibe together.
 ```
+
+An accessory was chosen for this criterion on purpose: there is less in the
+wardrobe that obviously goes with a bag, so it is where a model is most tempted
+to reach for a piece nobody owns. It didn't.
+
+### One thing the table doesn't show
+
+Criterion 5 passed 5 of 5, and the five outfits are nearly the same outfit.
+Tries 2, 3, 4 and 5 all open with the identical sentence:
+
+> Pair the Mini Shoulder Bag with the White ribbed tank top and Wide-leg khaki
+> trousers for an effortless, neutral-toned look.
+
+Caching was off and the temperature was 0.9, so these are five separate model
+calls that independently produced one answer four times. Criterion 4 checks for
+exactly this in the fit cards — where the five openings came out all different —
+but no criterion checks it for the outfit, so nothing in the table is allowed to
+fail on it.
+
+That is the diagnosis the improvement below works from. It is not a missed
+target; it is a gap in what the targets measure.
 
 ---
 
