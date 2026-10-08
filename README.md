@@ -723,6 +723,120 @@ context, so a failed price check could log and carry on to a fit card with no
 note. I left it strict so that a broken server is loud rather than silent.
 
 
+## Failure Modes
+
+Three failures, triggered one at a time, with what the agent actually said.
+Two of the three behave the way they should. The third is where the real
+finding is.
+
+### 1. Empty search — passes
+
+Query: `ceremonial walrus-hide spacesuit size XXS under $3`. Nothing in the 40
+listings is close, and all three filters are set, so this cannot match.
+
+```
+[2] search_listings (via MCP)
+      in:  {'description': 'ceremonial walrus-hide spacesuit', 'size': 'XXS', 'max_price': 3.0}
+      out: [] (empty)
+      →    0 match(es)
+[3] branch
+      →    search returned []: stopping before suggest_outfit
+
+  Nothing in the 40 listings matched. Try raising the $3 ceiling; dropping the size XXS filter; using fewer words than "ceremonial walrus-hide spacesuit".
+
+0 model calls this session
+```
+
+The loop stops at step 3 and names all three things the user could change,
+built from what was actually parsed rather than from a fixed string. **Zero
+model calls** — the branch fires before anything is spent, which is the part
+worth checking. `agent.py::_no_results_message` wrote that message.
+
+### 2. Empty wardrobe — passes
+
+`python app.py ask 'cropped cardigan' --empty-wardrobe`. The search still finds
+items; the wardrobe handed to `suggest_outfit` holds nothing.
+
+```
+[6] suggest_outfit
+      out: Since your wardrobe is currently empty, these are general ideas for styling this vintage light wash cropped de…
+```
+
+Full text returned:
+
+> Since your wardrobe is currently empty, these are general ideas for styling
+> this vintage light wash cropped denim jacket. You could lean into a
+> streetwear aesthetic by layering it over an oversized graphic tee with black
+> biker shorts and chunky sneakers. Alternatively, for a classic look, pair it
+> with high-waisted wide-leg trousers and a fitted ribbed tank top.
+
+No crash, no empty string, and it says plainly that the wardrobe is empty
+instead of inventing pieces the user does not own. The run continues to a fit
+card. `tools.py::suggest_outfit` takes the empty-wardrobe path at its first
+branch and asks for general advice.
+
+### 3. Model unavailable — partly fails
+
+**First, something the assignment step could not have told me.** The
+instruction is to change one character of the key in `.env`. I did, and the
+run succeeded with two live model calls — the bad key had no effect at all.
+
+The cause: `GEMINI_API_KEY` is exported in my shell environment, and
+`load_dotenv()` at `config.py:18` does not override variables that are already
+set. So `.env` was never being read on this machine, and every run this whole
+project has used the shell value. Editing `.env` to break the key is a no-op
+here. Worth knowing because it means `.env` is not the authoritative source
+of the key on my setup, and the error text the agent prints ("Check
+GEMINI_API_KEY in your .env file") points at the wrong file.
+
+Triggering it properly, by overriding the variable for one run on a query I
+had not asked before, so nothing could come from the cache:
+
+```
+GEMINI_API_KEY="<a deliberately invalid key>" python app.py ask 'chunky brown knit cardigan' --trace
+```
+
+```
+[4] compare_prices (via MCP)
+      out: {'category': 'tops', 'price': 35.0, 'median': 21.0, 'cheaper_count': 14, 'total': 15, 'verdict': 'above_median…
+[5] branch
+      →    above median with a cheaper option: carrying a price note into the fit card
+
+ModelUnavailable: The model rejected your API key. Check GEMINI_API_KEY in your .env file, or create a fresh key at aistudio.google.com.
+
+1 model calls this session
+```
+
+Through `app.py` the user sees one readable line, not a traceback. That is not
+my loop doing it, though — it is the broad `except Exception` at `app.py:230`,
+which the starter put there precisely so students read a message rather than a
+stack trace. My loop contributes nothing.
+
+Calling `run_agent()` directly, the way `run_eval.py` and `serve.py` do,
+shows what the loop actually does with the failure:
+
+```
+Traceback (most recent call last):
+  File "<string>", line 4, in <module>
+  File ".../agent.py", line 232, in run_agent
+    session["outfit_suggestion"] = suggest_outfit(
+  File ".../tools.py", line 239, in suggest_outfit
+    return generate(prompt, system=system)
+  File ".../generate.py", line 332, in generate
+    raise ModelUnavailable(_explain(exc)) from exc
+generate.ModelUnavailable: The model rejected your API key.
+```
+
+So the real behaviour is: **`ModelUnavailable` is imported at `agent.py:22` and
+never caught.** The exception leaves `run_agent()` mid-loop, `session["error"]`
+is never set, and the session dict — with its parsed query, its 5 search
+results, its price check and its price note, all of which cost something to
+produce — is discarded. Anything calling the loop as a library gets a
+traceback. Only the CLI is protected, and only by accident.
+
+That is the gap the improvement in **The Improvement** closes.
+
+
 ## Run Log — Before
 
 <!-- Five criteria, five tries each, in this exact format.
