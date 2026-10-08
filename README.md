@@ -356,6 +356,36 @@ unmeasurable. Evidence: **Stretch 3 — two runs, the second shaped by the
 first** below.
 
 
+### Unit 4 stretch — a second tool moved onto MCP
+
+Declared here before I built it, the same way the three above were.
+
+Milestone 1 moved `search_listings` onto the MCP server. This moves a second
+one: `compare_prices`. It is the right next candidate for the same reason
+`search_listings` was — it reads the listings data and makes no model call, so
+nothing is slow, nothing changes between runs, and the only thing I am
+exercising is the protocol seam.
+
+What changes: `compare_prices` is registered on `mcp_server.py` alongside
+`search_listings`, with its own written description and typed inputs, and the
+loop's `price_check` step calls it through `mcp_client.call_tool` instead of
+importing it from `tools.py`. The implementation in `tools.py` is untouched —
+the server wraps it, exactly as it wraps the search.
+
+What should not change: the returned dict, key for key. The price branch reads
+`verdict` and `cheaper` off it, so if the shape shifted in transit the branch
+would silently stop firing. The evidence below is a direct-versus-MCP equality
+check on that dict, plus a run showing the branch still taking both paths.
+
+One thing I expected to be harder than it was: `compare_prices` takes a whole
+listing dict as its input, not flat strings and numbers like `search_listings`
+does. FastMCP builds that into an object in the input schema from the `dict`
+type hint, and `mcp_client._unwrap` puts the returned dict back without
+needing the `{"result": ...}` unwrapping a bare value needs.
+
+Evidence: **Unit 4 stretch — `compare_prices` over MCP** below.
+
+
 ### Stretch 1 — the fourth tool in a run
 
 `compare_prices` on its own, covering the dear case, the cheap case and the
