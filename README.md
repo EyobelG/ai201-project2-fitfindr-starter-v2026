@@ -896,9 +896,106 @@ All five met. How each column was decided:
   wide-leg khaki trousers, the baggy straight-leg jeans and the chunky white
   sneakers. All four are in the wardrobe. Nothing was invented.
 
-**Real output from one try** — criterion 5, try 1, produced by
-`tools.py::suggest_outfit` and `tools.py::create_fit_card` via
-`agent.py::run_agent`:
+**Real output, one try per criterion.** All of it is from
+`results/run_2026-10-07_2234_before.md`, produced by `agent.py::run_agent`
+driving `tools.py` — the search through `mcp_server.py::search_listings`, the
+price check through `mcp_server.py::compare_prices`, and the two model-calling
+tools as `tools.py::suggest_outfit` and `tools.py::create_fit_card`.
+
+**Criterion 1, try 1** — `agent.py::run_agent`, all three tools, query
+`vintage graphic tee under $30`:
+
+```
+- stopped early: no
+- selected_item: Y2K Baby Tee — Butterfly Print ($18.0, depop)
+- search_results: 10
+
+Outfit suggestion:
+
+Pair the Y2K Baby Tee — Butterfly Print with your Baggy straight-leg jeans,
+dark wash and Chunky white sneakers for a classic nostalgic look. Layer the
+Vintage black denim jacket over top and complete the outfit with your Black
+crossbody bag.
+
+Fit card:
+
+Finally scored this dreamy little butterfly baby tee on Depop for just $18 and
+I am obsessed. It's giving major early 2000s mall-rat energy, especially paired
+with baggy dark wash denim and chunky white sneakers. Throwing on a black denim
+jacket over top makes it feel just grungy enough.
+```
+
+**Criterion 2, try 1** — `agent.py::_no_results_message`, query
+`designer ballgown size XXS under $5`:
+
+```
+- stopped early: yes — Nothing in the 40 listings matched. Try raising the $5
+  ceiling; dropping the size XXS filter; using fewer words than "designer
+  ballgown".
+- selected_item: (none)
+- search_results: 0
+```
+
+The trace for that try ends three steps in, with no `suggest_outfit` step at
+all:
+
+```
+[2] search_listings (via MCP)
+      in:  {'description': 'designer ballgown', 'size': 'XXS', 'max_price': 5.0}
+      out: [] (empty)
+      →    0 match(es)
+[3] branch
+      →    search returned []: stopping before suggest_outfit
+```
+
+**Criterion 3, try 1** — the state check. `select_item` in
+`agent.py::run_agent` takes `search_results[0]`, and
+`tools.py::create_fit_card` is given that same dict:
+
+```
+- stopped early: no
+- selected_item: Y2K Baby Tee — Butterfly Print ($18.0, depop)
+- search_results: 10
+
+Fit card:
+
+Found the ultimate Y2K butterfly baby tee on Depop for just $18, and I am
+officially obsessed. It's giving total early-2000s mall rat energy, especially
+paired with baggy straight-leg denim and chunky kicks. Can't wait to live in
+this all summer!
+```
+
+The trace confirms the two halves match: `[2]` lists
+`Y2K Baby Tee — Butterfly Print` first and `[3] select_item` returns that same
+listing. `$18` and `depop` both appear in the card.
+
+**Criterion 4, try 1** — `tools.py::create_fit_card`, the same item run five
+times. Try 1's card, three sentences, `$38` once and `Depop` once:
+
+```
+Okay, a total splurge at $38 on Depop, but these vintage Levi's 501s are worth
+every single penny for that perfect, broken-in feel. I'm living in this exact
+medium wash denim paired with a cozy grey crewneck and chunky sneakers for the
+ultimate effortless streetwear look. Honestly, finding a 30x30 that actually
+fits like this is literal secondhand magic.
+```
+
+The five opening sentences across the five tries, which is what the
+no-repeats half of the criterion is scored on:
+
+```
+1: Okay, a total splurge at $38 on Depop, but these vintage Levi's 501s are worth every single penny…
+2: Okay, total splurge since most bottoms on here go for way less, but scoring these vin…
+3: Total splurge compared to my usual thrifting budget, but scoring these vintage Levi's…
+4: Okay, breaking my own budget rules for these vintage Levi's 501 jeans, but how could…
+5: I totally splurged on these vintage Levi's 501 jeans on Depop for $38, but look at th…
+```
+
+All five open differently. Every one of them reaches for "splurge", because
+`agent.py::_price_note` told the card the jeans are above the median for
+bottoms — the branch is shaping the wording in all five.
+
+**Criterion 5, try 1** — `tools.py::suggest_outfit` with a non-empty wardrobe:
 
 ```
 - stopped early: no
@@ -914,7 +1011,8 @@ chunky white sneakers to tie the vintage streetwear vibe together.
 
 An accessory was chosen for this criterion on purpose: there is less in the
 wardrobe that obviously goes with a bag, so it is where a model is most tempted
-to reach for a piece nobody owns. It didn't.
+to reach for a piece nobody owns. It didn't — the tank top, the jeans and the
+sneakers are all in `wardrobe["items"]`.
 
 ### One thing the table doesn't show
 
