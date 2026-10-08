@@ -836,6 +836,31 @@ traceback. Only the CLI is protected, and only by accident.
 
 That is the gap the improvement in **The Improvement** closes.
 
+### A note on the cache, and on where the key lives now
+
+Two things I got wrong while triggering failure 3, both worth recording.
+
+**The cache hid the failure once.** After rotating the key I wanted to confirm
+the old one was dead, so I called `generate("Say Ready")` with it and got a
+reply back. I read that as "still valid". It was not: I had already run that
+exact prompt earlier in the session, so the answer came from the build cache
+without any request leaving the machine. Re-running with `AI201_CACHE=0` and a
+prompt containing a random number — one that could not possibly be cached —
+returned `ModelUnavailable` immediately. The key had been revoked all along.
+
+This is exactly what the milestone instructions warn about, and reading it as a
+pass is an easy mistake to make, because a cache hit and a live call look
+identical in the output. The only reliable signals are the `N model calls this
+session` line at the end of a run and turning the cache off outright.
+
+**`.env` is authoritative now.** The shadowing described above was real at the
+time those runs were made, and the evidence stands as recorded. I have since
+deleted the `export GEMINI_API_KEY=` line from `~/.zshrc` and rotated the key,
+so `load_dotenv()` at `config.py:18` now has nothing to be overridden by and
+`.env` is the single source. Re-running the milestone's step as written — break
+one character of the key in `.env` — produces `ModelUnavailable` on this
+machine today.
+
 
 ## Run Log — Before
 
