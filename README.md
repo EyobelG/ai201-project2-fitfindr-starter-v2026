@@ -635,6 +635,94 @@ always there.
 
 ---
 
+### Unit 4 stretch — `compare_prices` over MCP
+
+The server now offers two tools. `python mcp_client.py` lists both, each with
+its own description and a schema built from the type hints:
+
+```
+  search_listings
+    - description: string
+    - size: string  (optional)
+    - max_price: number  (optional)
+
+  compare_prices
+    - new_item: object
+```
+
+`new_item: object` is the one difference from the search. `compare_prices`
+takes a whole listing dict rather than flat scalars, and FastMCP turns the
+`dict` hint into an object in the input schema.
+
+**The returned dict is identical across the seam.** Checked on two items, one
+on each side of the median, since the price branch reads `verdict` and
+`cheaper` off this dict and a shape change in transit would stop the branch
+firing without any error:
+
+```
+Vintage Levi's 501 Jeans — Medium Wash
+  direct == mcp : True
+  keys match    : True
+  verdict       : above_median
+  cheaper type  : list
+Y2K Baby Tee — Butterfly Print
+  direct == mcp : True
+  keys match    : True
+  verdict       : at_or_below_median
+  cheaper type  : list
+```
+
+**The price branch still fires through MCP.** Both MCP calls are visible in
+order in the trace, steps 2 and 4, and step 5 is the branch deciding on what
+step 4 returned:
+
+```
+[1] parse_query
+      in:  vintage Levi 501 jeans medium wash
+      out: {'description': 'vintage Levi 501 jeans medium wash', 'size': None, 'max_price': None}
+[2] search_listings (via MCP)
+      in:  {'description': 'vintage Levi 501 jeans medium wash', 'size': None, 'max_price': None}
+      out: 10 items: Vintage Levi's 501 Jeans — Medium Wash, Baggy Carpenter Jeans — Dark Wash, Denim Vest — Medium Wash, Studded … +7 more
+      →    10 match(es)
+[3] select_item
+      out: Vintage Levi's 501 Jeans — Medium Wash ($38.0, depop)
+[4] compare_prices (via MCP)
+      in:  Vintage Levi's 501 Jeans — Medium Wash ($38.0, depop)
+      out: {'category': 'bottoms', 'price': 38.0, 'median': 30.0, 'cheaper_count': 9, 'total': 10, 'verdict': 'above_medi…
+[5] branch
+      →    above median with a cheaper option: carrying a price note into the fit card
+[6] suggest_outfit
+      in:  Vintage Levi's 501 Jeans — Medium Wash ($38.0, depop)
+      out: Pair the Vintage Levi's 501 Jeans with the White ribbed tank top and the Oversized grey crewneck sweatshirt la…
+[7] create_fit_card
+      in:  Vintage Levi's 501 Jeans — Medium Wash ($38.0, depop)
+      out: Found my holy grail vintage Levi's 501 jeans on Depop and honestly, at $38, they were a total splurge compared…
+
+price_note: $38 is above the $30 median for bottoms; 9 of 10 are cheaper, the
+lowest being Biker Shorts — Black, Shiny at $14.
+```
+
+The other two paths are unchanged. `python agent.py` still takes the
+at-or-below-median path without a price note on the first query, and the
+empty-search branch on the second query still stops before `suggest_outfit`
+with `fit_card` left as None.
+
+**What this cost.** Each `call_tool` starts `mcp_server.py` as a fresh process
+over stdio and stops it again, so a run that used to make one in-process
+function call for the price check now pays a process launch for it. Two tools
+on MCP means two launches per run. That is the wrong trade for production and
+the right one for seeing the seam, which is what `mcp_client.py` says about
+holding the connection open.
+
+**One failure mode this introduced.** Both MCP steps catch `MCPError` and set
+`session["error"]` rather than letting a stack trace out, because an
+unreachable server is now a way the run can fail that did not exist when the
+tools were imported. The price-check handler stops the run before
+`suggest_outfit`, which is arguably too strict — the price note is optional
+context, so a failed price check could log and carry on to a fit card with no
+note. I left it strict so that a broken server is loud rather than silent.
+
+
 ## Run Log — Before
 
 <!-- Five criteria, five tries each, in this exact format.

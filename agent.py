@@ -17,7 +17,7 @@ import re
 
 import config
 import trace
-from tools import suggest_outfit, create_fit_card, compare_prices
+from tools import suggest_outfit, create_fit_card
 from mcp_client import call_tool, MCPError
 from generate import ModelUnavailable
 
@@ -202,8 +202,18 @@ def run_agent(query: str, wardrobe: dict) -> dict:
             step = "price_check"
 
         elif step == "price_check":
-            session["price_check"] = compare_prices(session["selected_item"])
-            trace.step("compare_prices", inputs=session["selected_item"],
+            # The second tool on MCP (stretch). Same seam as the search.
+            try:
+                session["price_check"] = call_tool("compare_prices", {
+                    "new_item": session["selected_item"],
+                })
+            except MCPError as exc:
+                session["error"] = f"The price check is unavailable: {exc}"
+                trace.step("compare_prices (via MCP)",
+                           inputs=session["selected_item"],
+                           note="MCP call failed: stopping before suggest_outfit")
+                return session
+            trace.step("compare_prices (via MCP)", inputs=session["selected_item"],
                        returned=str(session["price_check"]))
             # THE SECOND BRANCH: dear for its category, and something cheaper
             # exists to name. Note it and carry the note into the fit card.

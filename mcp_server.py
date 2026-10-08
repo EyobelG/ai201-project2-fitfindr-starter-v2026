@@ -60,6 +60,7 @@ works with a direct call, and **a documented failure earns the point in full.**
 from mcp.server.fastmcp import FastMCP
 
 from tools import search_listings as _search_listings_impl  # noqa: F401 — you'll use this below
+from tools import compare_prices as _compare_prices_impl
 
 # log_level="WARNING" keeps the server from printing an INFO line for every
 # request. Without it your terminal fills with "Processing request of type
@@ -109,6 +110,49 @@ def search_listings(
         the size, or use fewer words.
     """
     return _search_listings_impl(description, size, max_price)
+
+
+# ── a second tool on MCP (unit 4 stretch) ─────────────────────────────────────
+#
+# Same reasoning as the search: no model call, so the only thing this exercises
+# is the protocol seam. Declared in the README before it was built.
+
+@mcp.tool()
+def compare_prices(new_item: dict) -> dict:
+    """
+    Say whether one secondhand listing is expensive or cheap for its own
+    category, by comparing it against every other listing in that category.
+
+    Args:
+        new_item: a full listing dict, as returned by `search_listings`. Only
+                  three of its keys are read: `category` (str), `price`
+                  (float, US dollars) and `id` (str, so the item is not
+                  compared against itself).
+
+    Returns:
+        A dict with these keys:
+            category       (str)        the category compared within
+            price          (float)      this item's own price, US dollars
+            median         (float)      median price of that category,
+                                        excluding this item
+            cheaper_count  (int)        how many listings in the category
+                                        undercut this one
+            total          (int)        how many listings are in the category,
+                                        excluding this item
+            verdict        (str)        one of "above_median",
+                                        "at_or_below_median" or
+                                        "alone_in_category"
+            cheaper        (list[dict]) up to two cheapest undercutting
+                                        listings, each {id, title, price}
+
+        When there is nothing to compare against: a category holding no other
+        listing returns verdict "alone_in_category", `median` equal to the
+        item's own price, `cheaper_count` 0 and `cheaper` an empty list. An
+        item whose category is missing from the data is treated the same way.
+        It never returns null and never raises, so a caller can read `verdict`
+        unconditionally.
+    """
+    return _compare_prices_impl(new_item)
 
 # ──────────────────────────────────────────────────────────────────────────────
 #
