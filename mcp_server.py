@@ -67,23 +67,49 @@ from tools import search_listings as _search_listings_impl  # noqa: F401 — you
 mcp = FastMCP("fitfindr", log_level="WARNING")
 
 
-# ── TODO: uncomment and fill this in ──────────────────────────────────────────
-#
-# @mcp.tool()
-# def search_listings(
-#     description: str,
-#     size: str | None = None,
-#     max_price: float | None = None,
-# ) -> list[dict]:
-#     """
-#     <-- YOUR DESCRIPTION GOES HERE.
-#
-#         One or two sentences. What does this tool do, what does it need, and
-#         what does it give back when it finds nothing? Written for a reader
-#         who cannot see the code.
-#     """
-#     return _search_listings_impl(description, size, max_price)
-#
+# ── the one tool this server offers ───────────────────────────────────────────
+
+@mcp.tool()
+def search_listings(
+    description: str,
+    size: str | None = None,
+    max_price: float | None = None,
+) -> list[dict]:
+    """
+    Search a fixed catalogue of 40 secondhand clothing listings and return the
+    ones matching a plain-language description, ranked best match first.
+
+    Matching is keyword overlap against each listing's title, description,
+    style tags, category, brand and colors; a listing sharing no keyword with
+    `description` is never returned, so an empty or purely generic description
+    yields nothing.
+
+    Args:
+        description: keywords for the wanted item, e.g. "vintage graphic tee".
+                     Required, and the only field that ranks results.
+        size:        a size label to filter by, matched case-insensitively on
+                     whole tokens, not substrings — "S" does not match "US 9"
+                     and "L" does not match "XL", while a listing sized
+                     "One Size" matches any requested size. Omit to skip size
+                     filtering. Sizes in this catalogue are lettered ("XS",
+                     "S/M", "L"), US shoe ("US 9") or waist/length ("W30 L30").
+        max_price:   price ceiling in whole US dollars, inclusive — 30 keeps a
+                     $30.00 listing. Omit to skip price filtering.
+
+    Returns:
+        A list of at most 10 listing dicts, highest keyword score first. Each
+        dict has the keys: id, title, description, category, style_tags (list
+        of str), size (str), condition (str), price (float, US dollars),
+        colors (list of str), brand (str, or null for most listings) and
+        platform (str).
+
+        Returns an empty list when nothing matches — an empty list, never null
+        and never an error. An empty list means the filters and keywords ruled
+        everything out, and the caller should loosen the price ceiling, drop
+        the size, or use fewer words.
+    """
+    return _search_listings_impl(description, size, max_price)
+
 # ──────────────────────────────────────────────────────────────────────────────
 #
 # Two notes on the block above.
