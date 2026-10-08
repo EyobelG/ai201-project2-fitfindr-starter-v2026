@@ -152,6 +152,7 @@ def run_agent(query: str, wardrobe: dict) -> dict:
         than a stack trace. The import is already at the top of this file.
     """
     session = new_session(query, wardrobe)
+    trace.start_trace()
     count = 0
 
     # The loop picks its next step by reading the session, not by running a
@@ -164,6 +165,8 @@ def run_agent(query: str, wardrobe: dict) -> dict:
 
         if step == "parse":
             session["parsed"] = parse_query(query)
+            trace.step("parse_query", inputs=query,
+                       returned=str(session["parsed"]))
             step = "search"
 
         elif step == "search":
@@ -173,18 +176,26 @@ def run_agent(query: str, wardrobe: dict) -> dict:
                 size=parsed["size"],
                 max_price=parsed["max_price"],
             )
+            trace.step("search_listings", inputs=str(parsed),
+                       returned=session["search_results"],
+                       note=f"{len(session['search_results'])} match(es)")
             # THE BRANCH: nothing came back, so there is nothing to style.
             if not session["search_results"]:
                 session["error"] = _no_results_message(session["parsed"])
+                trace.step("branch",
+                           note="search returned []: stopping before suggest_outfit")
                 return session
             step = "select"
 
         elif step == "select":
             session["selected_item"] = session["search_results"][0]
+            trace.step("select_item", returned=session["selected_item"])
             step = "price_check"
 
         elif step == "price_check":
             session["price_check"] = compare_prices(session["selected_item"])
+            trace.step("compare_prices", inputs=session["selected_item"],
+                       returned=str(session["price_check"]))
             # THE SECOND BRANCH: dear for its category, and something cheaper
             # exists to name. Note it and carry the note into the fit card.
             # selected_item is left alone on purpose — swapping it here would
@@ -192,12 +203,18 @@ def run_agent(query: str, wardrobe: dict) -> dict:
             check = session["price_check"]
             if check["verdict"] == "above_median" and check["cheaper"]:
                 session["price_note"] = _price_note(check)
+                trace.step("branch", note="above median with a cheaper option: "
+                                          "carrying a price note into the fit card")
+            else:
+                trace.step("branch", note=f"verdict {check['verdict']!r}: no price note")
             step = "outfit"
 
         elif step == "outfit":
             session["outfit_suggestion"] = suggest_outfit(
                 session["selected_item"], session["wardrobe"]
             )
+            trace.step("suggest_outfit", inputs=session["selected_item"],
+                       returned=session["outfit_suggestion"])
             # Branch again: no outfit text means no caption worth writing.
             step = "fit_card" if (session["outfit_suggestion"] or "").strip() else "done"
 
@@ -207,6 +224,8 @@ def run_agent(query: str, wardrobe: dict) -> dict:
                 session["selected_item"],
                 price_note=session["price_note"],
             )
+            trace.step("create_fit_card", inputs=session["selected_item"],
+                       returned=session["fit_card"])
             step = "done"
 
         else:
