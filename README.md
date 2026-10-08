@@ -924,34 +924,105 @@ that produced it:
 
 ## Loop Trace
 
-<!-- One full run, printed step by step, with the MCP call visible in it.
+One `trace.step()` per step of the loop, placed where the step writes its
+result into the session. Both MCP calls are visible among them, steps 2 and 4.
+The `branch` entries are not tool calls — they record the loop deciding, which
+is the thing a trace is for.
 
-     `python app.py ask '...' --trace` once you've added the trace.step()
-     calls in Milestone 2.
-
-     Worth pasting BOTH the happy path and the empty-search path. The empty
-     one should be visibly shorter, because it stops. If your two traces are
-     the same length, your branch isn't working — and this is the fastest way
-     anyone will ever find that out. -->
-
-**Happy path**
+**Happy path** — `python app.py ask 'oversized flannel shirt plaid red black' --trace`
 
 ```
+[1] parse_query
+      in:  oversized flannel shirt plaid red black
+      out: {'description': 'oversized flannel shirt plaid red black', 'size': None, 'max_price': None}
+[2] search_listings (via MCP)
+      in:  {'description': 'oversized flannel shirt plaid red black', 'size': None, 'max_price': None}
+      out: 10 items: Oversized Flannel Shirt — Plaid Red/Black, Oversized College Crewneck — Faded Red, Knit Cardigan — Chunky Brown … +7 more
+      →    10 match(es)
+[3] select_item
+      out: Oversized Flannel Shirt — Plaid Red/Black ($22.0, thredUp)
+[4] compare_prices (via MCP)
+      in:  Oversized Flannel Shirt — Plaid Red/Black ($22.0, thredUp)
+      out: {'category': 'tops', 'price': 22.0, 'median': 21.0, 'cheaper_count': 8, 'total': 15, 'verdict': 'above_median'…
+[5] branch
+      →    above median with a cheaper option: carrying a price note into the fit card
+[6] suggest_outfit
+      in:  Oversized Flannel Shirt — Plaid Red/Black ($22.0, thredUp)
+      out: Layer the Oversized Flannel Shirt open over the White ribbed tank top and pair it with the Baggy straight-leg …
+  [rate limit] service pushed back. Waiting 43s (attempt 1 of 5). This is the limiter doing its job, not a bug.
+[7] create_fit_card
+      in:  Oversized Flannel Shirt — Plaid Red/Black ($22.0, thredUp)
+      out: Okay, I totally splurged a little on this red and black plaid oversized flannel and honestly, zero regrets. Fo…
 
+  Found:    Oversized Flannel Shirt — Plaid Red/Black — $22.0 on thredUp
+
+  Outfit:   Layer the Oversized Flannel Shirt open over the White ribbed tank top and pair it with the Baggy straight-leg jeans for a classic grunge look. Finish this streetwear-inspired outfit with the Chunky white sneakers and the Black crossbody bag.
+
+  Fit card: Okay, I totally splurged a little on this red and black plaid oversized flannel and honestly, zero regrets. Found it on thredUp for $22, and it’s giving me the ultimate 90s streetwear grunge energy when I throw it open over a ribbed tank and baggy jeans. The fit is ridiculously good, so yeah, worth every penny of the splurge.
+
+3 model calls this session, 564 prompt + 127 output tokens
 ```
 
-**Empty search**
+Three things in that trace worth pointing at.
+
+`[5] branch` fires on what `[4]` returned, not on anything the user typed. The
+flannel is $22 against a $21 median for tops, so the price note is written and
+carried into the fit card, which is why the card opens by calling it a splurge.
+A dollar either way and that line would not exist.
+
+The `[rate limit]` line between steps 6 and 7 is real output, not an error. The
+limiter in `generate.py` paced the second model call because `run_eval.py` was
+running against the same key at the same time. I left it in rather than
+re-running for a clean trace, because it is the only place in this project
+where the cost of two model calls per run is visible.
+
+`3 model calls this session` at the end accounts for every call: the outfit, the
+fit card, and one made by `run_eval.py`'s concurrent run sharing the counter.
+The two MCP steps cost no model calls at all, which is why `search_listings`
+was the right tool to move first.
+
+**Empty search** — `python app.py ask 'ceremonial walrus-hide spacesuit size XXS under $3' --trace`
 
 ```
+[1] parse_query
+      in:  ceremonial walrus-hide spacesuit size XXS under $3
+      out: {'description': 'ceremonial walrus-hide spacesuit', 'size': 'XXS', 'max_price': 3.0}
+[2] search_listings (via MCP)
+      in:  {'description': 'ceremonial walrus-hide spacesuit', 'size': 'XXS', 'max_price': 3.0}
+      out: [] (empty)
+      →    0 match(es)
+[3] branch
+      →    search returned []: stopping before suggest_outfit
 
+  Nothing in the 40 listings matched. Try raising the $3 ceiling; dropping the size XXS filter; using fewer words than "ceremonial walrus-hide spacesuit".
+
+0 model calls this session
 ```
 
-**On the MCP move:** <!-- what changed in your code, and whether anything
-behaved differently afterwards. If the rewire didn't work, say exactly where it
-broke — the error text and the last thing that worked. That earns the point in
-full. -->
+Three steps against seven, and **0 model calls against 3**. The branch at `[3]`
+returns before `select_item`, so there is no item to price-check and nothing to
+style. That length difference is the branch working: if both traces ran to seven
+steps, the loop would be a list of function calls with an `if` that does nothing.
 
+**On the MCP move:** two tools moved, not one. `search_listings` was the
+required move and `compare_prices` followed as a stretch feature. In both cases
+the direct import came out of `agent.py` and the call became
+`mcp_client.call_tool(name, {...})`, with the implementations in `tools.py`
+untouched — `mcp_server.py` wraps them and publishes a description written for
+a caller that cannot read the code.
 
+Nothing behaved differently afterwards, which was the point of checking rather
+than assuming. `direct == mcp` is `True` for the search's list of 10 dicts and
+for the price check's dict on both sides of the median. The branches that read
+those values — the empty-search branch on a list, the price branch on
+`verdict` and `cheaper` — still fire on the same inputs.
+
+Two things did change, and neither is visible in the output. Every
+`call_tool` starts `mcp_server.py` as a subprocess over stdio and stops it
+again, so a run now pays two process launches it did not pay before. And an
+unreachable server became a new way for a run to fail, so both MCP steps catch
+`MCPError` and set `session["error"]` rather than letting it escape — the same
+treatment `ModelUnavailable` now gets.
 
 ---
 

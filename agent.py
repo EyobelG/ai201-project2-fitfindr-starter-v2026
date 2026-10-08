@@ -229,20 +229,40 @@ def run_agent(query: str, wardrobe: dict) -> dict:
             step = "outfit"
 
         elif step == "outfit":
-            session["outfit_suggestion"] = suggest_outfit(
-                session["selected_item"], session["wardrobe"]
-            )
+            # Both remaining steps call the model, so both can fail in a way
+            # the earlier steps cannot. Catching it here keeps the session —
+            # the parse, the search results and the price check are already in
+            # it, and they cost something to produce.
+            try:
+                session["outfit_suggestion"] = suggest_outfit(
+                    session["selected_item"], session["wardrobe"]
+                )
+            except ModelUnavailable as exc:
+                session["error"] = _model_down_message("suggest_outfit", exc)
+                trace.step("suggest_outfit",
+                           inputs=session["selected_item"],
+                           note="model unavailable: stopping with no outfit")
+                return session
             trace.step("suggest_outfit", inputs=session["selected_item"],
                        returned=session["outfit_suggestion"])
             # Branch again: no outfit text means no caption worth writing.
             step = "fit_card" if (session["outfit_suggestion"] or "").strip() else "done"
 
         elif step == "fit_card":
-            session["fit_card"] = create_fit_card(
-                session["outfit_suggestion"],
-                session["selected_item"],
-                price_note=session["price_note"],
-            )
+            try:
+                session["fit_card"] = create_fit_card(
+                    session["outfit_suggestion"],
+                    session["selected_item"],
+                    price_note=session["price_note"],
+                )
+            except ModelUnavailable as exc:
+                # The outfit survived, so say so rather than throwing the run
+                # away: the user still has something usable on screen.
+                session["error"] = _model_down_message("create_fit_card", exc)
+                trace.step("create_fit_card",
+                           inputs=session["selected_item"],
+                           note="model unavailable: outfit kept, no caption")
+                return session
             trace.step("create_fit_card", inputs=session["selected_item"],
                        returned=session["fit_card"])
             step = "done"
@@ -252,6 +272,16 @@ def run_agent(query: str, wardrobe: dict) -> dict:
             return session
 
     return session
+
+
+def _model_down_message(tool: str, exc: Exception) -> str:
+    """Name the step that failed and what the user can do about it."""
+    return (
+        f"The model couldn't be reached, so {tool} didn't run. "
+        f"{exc} "
+        f"The listings search doesn't use the model, so searching still works "
+        f"— rerun once the key is fixed to get the styling."
+    )
 
 
 def _price_note(check: dict) -> str:
