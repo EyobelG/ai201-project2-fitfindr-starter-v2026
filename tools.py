@@ -20,6 +20,7 @@ That last line is what your loop branches on. "Returns a list" earns nothing —
 the description has to say what is *in* the list.
 """
 
+import random
 import re
 import statistics
 
@@ -218,11 +219,19 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
         )
         prompt = f"Item they are considering:\n{item_line}\n\nHow would you style it?"
     else:
+        # Unit 4 improvement. The wardrobe used to go into the prompt in
+        # data_loader order on every call, and the model took the first
+        # plausible pairing off the top of the list — the same pairing five
+        # times out of five at temperature 0.9 with the cache off. Shuffling
+        # the order per call changes which pieces the model reads first
+        # without changing what it is allowed to name.
+        shuffled = list(items)
+        random.shuffle(shuffled)
         owned = "\n".join(
             f"- {i.get('name')} ({i.get('category')}; "
             f"{', '.join(i.get('colors') or []) or 'colors unlisted'}; "
             f"{', '.join(i.get('style_tags') or []) or 'no tags'})"
-            for i in items
+            for i in shuffled
         )
         system = (
             "You style secondhand clothing. Suggest one or two outfits that pair "
