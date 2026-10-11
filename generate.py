@@ -37,6 +37,10 @@ import time
 import config
 
 _call_times: list[float] = []
+
+# Unit 4, second improvement: how long to wait before the single retry of a
+# transient 503. Short on purpose — one pause a user would sit through.
+TRANSIENT_BACKOFF = 2.0
 _session_calls = 0
 _cache_hits = 0
 _prompt_tokens = 0
@@ -296,6 +300,7 @@ def generate(
     _check_budget()
 
     last_error: Exception | None = None
+    transient_retries = 0  # unit 4, second improvement — see README
     for attempt in range(config.MAX_RETRIES):
         _wait_for_slot()
         try:
@@ -328,6 +333,27 @@ def generate(
                 or "resource" in message and "exhaust" in message
                 or "rate" in message and "limit" in message
             )
+            # Unit 4, second improvement. A 503 UNAVAILABLE is the provider
+            # saying it is busy — its own response body calls the condition
+            # temporary. It used to raise straight through and throw away the
+            # whole run, which is what cost criterion 1 a try in the after
+            # run. Retry it once, then give up and raise as before. A bad key
+            # is not transient and still fails on the first attempt.
+            transient = (
+                "503" in message
+                or "unavailable" in message
+                or "overloaded" in message
+            )
+            if not rate_limited and transient and transient_retries < 1:
+                transient_retries += 1
+                print(
+                    "  [transient] model unavailable (503). Retrying once in "
+                    f"{TRANSIENT_BACKOFF:.0f}s.",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                time.sleep(TRANSIENT_BACKOFF)
+                continue
             if not rate_limited:
                 raise ModelUnavailable(_explain(exc)) from exc
             backoff = _retry_delay(exc, attempt)
