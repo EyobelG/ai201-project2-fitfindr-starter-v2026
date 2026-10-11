@@ -6,8 +6,10 @@ Everything about how the starter works and how to use it.
 
 ## Before your first class
 
-Setup happens **before class**. The [environment setup page](../pages/ide_setup)
-has the per-operating-system commands and the exact versions.
+Setup happens **before class**. The [Tool Setup page](https://courses.codepath.org/courses/ai201/pages/ide_setup)
+on the course site has the per-operating-system commands and the exact
+versions. (It is behind the course login, so the link only works while you are
+signed in to CodePath.)
 
 **Same API key you set up in unit 1.** Nothing new to sign up for. There is one
 new package — the MCP SDK, for unit 4 — and it installs with everything else.
