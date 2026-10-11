@@ -1087,11 +1087,19 @@ target; it is a gap in what the targets measure.
 | 2 | An impossible query stops before the second tool | 5 of 5 | **MET (5/5)** | `stopped early: yes`, and no `suggest_outfit` step anywhere in the trace. All five traces end at `[3] branch`. |
 | 3 | The item the search picked is the item the card describes | 5 of 5 | **MET (5/5)** | Compared the title at `[2] search_listings` position 0 against the title at `[3] select_item`, then checked the card for that item's price and platform. `$18` and `depop` appear in all five cards. |
 | 4 | Fit cards in-spec (2–4 sentences, price and platform once each) | ≥4 of 5 | **MET (5/5)** | Sentences counted on `.!?`, then counted occurrences of `$38` and `depop`. Every card: exactly 3 sentences, one mention each. Openings compared as exact strings — 5 unique of 5 (criterion 4b). |
-| 5 | The outfit never names a garment the user doesn't own | ≥4 of 5 | **MET (5/5)** | Read by hand — "is this garment owned" is not a string match. The five outfits name the white ribbed tank top, the wide-leg khaki trousers, the baggy straight-leg jeans and the chunky white sneakers; all four are in `data/wardrobe.json`. Nothing invented. |
+| 5 | The outfit never names a garment the user doesn't own | ≥4 of 5 | **MET (5/5)** as written · **MISSED (2/5)** on the revised measure | Read by hand — "is this garment owned" is not a string match. The five outfits name the white ribbed tank top, the wide-leg khaki trousers, the baggy straight-leg jeans and the chunky white sneakers; all four are in `data/wardrobe.json`. Nothing invented, so the criterion as written is met 5 of 5. Scored against the revision in `criteria.md`, which adds the opening-sentence test, the same five tries give **2 unique openings of 5** — a miss, and the one this unit diagnoses and fixes. |
+
+**Two verdicts on criterion 5, and why both are here.** The original measure was
+what was in force when the before run executed, so 5 of 5 is the honest verdict
+for that run. The revised measure is what I would have had to write in unit 3 to
+catch what the run actually produced, and under it the same five tries miss at
+2 of 5. Reporting only the first would hide the defect; reporting only the
+second would score a run against a target written after it. The improvement is
+measured against the revised one, in both directions, below.
 
 **Diagnoses**
 
-No criterion missed, so there is no miss to diagnose. Writing "all five met,
+**The miss, on the revised measure: criterion 5, 2 unique openings of 5.** Writing "all five met,
 nothing to report" here would be the wrong read of the run, though — the run has
 a real defect that the table is structurally unable to fail on, and that is what
 the improvement below works from.
@@ -1113,6 +1121,23 @@ collapse passes 5/5 while being the most obvious thing wrong with the output.
 a floor on correctness and no ceiling on variety. An agent that returns the same
 correct outfit forever scores 5/5 on it. That is a gap in what I chose to
 measure in unit 3, not a tool failure.
+
+**Which target was set too low, and the tighter target.** Criterion 5. Its
+unit 3 target — "every garment named is owned, in at least 4 of 5 runs" — is
+passed by an agent that returns one identical outfit forever, which is exactly
+what it did. The specific tighter target I would set, and the one `criteria.md`
+now carries: **every garment named is owned AND no two of five outfits share an
+opening sentence, both in at least 4 of 5 tries**, openings split on `.!?` and
+compared as exact strings. The after run is scored against that number, not the
+old one.
+
+Criterion 1's ≥4 of 5 is the second-loosest, for a different reason: it was
+written to tolerate the keyword search missing a synonym, and it ended up
+tolerating something else entirely — a provider 503 in the after run. The
+tighter version separates the two: **5 of 5 completions when every tool call
+returns, with upstream failures recorded separately rather than spent against
+the target.** I have not applied that one, because changing a target between the
+two runs would make the comparison meaningless.
 
 
 
