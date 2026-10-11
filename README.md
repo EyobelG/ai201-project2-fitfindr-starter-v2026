@@ -1421,6 +1421,131 @@ mechanism the diagnosis named, which is why I believe that one.
 
 ---
 
+## Unit 4 stretch — the looser retry
+
+`levi 501 denim size XXS`. The data holds Levi's 501s; it holds none in XXS.
+Before this, that query stopped at the branch and the user was told to drop the
+size themselves. The loop now does it once, from
+`agent.py::run_agent`, step `search`:
+
+```
+[1] parse_query
+      in:  levi 501 denim size XXS
+      out: {'description': 'levi 501 denim', 'size': 'XXS', 'max_price': None}
+[2] search_listings (via MCP)
+      in:  {'description': 'levi 501 denim', 'size': 'XXS', 'max_price': None}
+      out: 0 items
+      →    0 match(es)
+[3] search_listings (retry, via MCP)
+      in:  size dropped: 'XXS'
+      out: 5 items: Vintage Levi's 501 Jeans — Medium Wash, Denim Jacket — Light Wash, Cropped, High-Waisted Denim Shorts — Cutoff … +2 more
+      →    5 match(es) without the size filter
+```
+
+The dropped constraint is named in the trace and carried to the user, because
+results in the wrong size are worth less if nobody says so. From `app.py`:
+
+```
+  Note:     Nothing matched in size XXS, so the size filter was dropped and the
+            search run again. What follows is not in your size.
+
+  Found:    Vintage Levi's 501 Jeans — Medium Wash — $38.0 on depop
+```
+
+It fired on all five tries of the `empty search retries without the size
+filter` scenario in **Run Log — After 2**, 0 matches then 5 every time.
+
+**What it did not change:** criterion 2. `designer ballgown size XXS under $5`
+still stops at the branch 5 of 5 — the retry runs, finds nothing without the
+size either, and the original message fires unchanged. That is the case the
+retry is supposed to leave alone: the size was never the reason.
+
+---
+
+## Run Log — After 2 (second improvement)
+
+`python run_eval.py --label after2` — 8 scenarios, 5 tries each, caching off,
+temperature 0.9, 70 model calls. Full output in
+`results/run_2026-10-11_1517_after2.md`.
+
+| Criterion | Target | Try 1 | Try 2 | Try 3 | Try 4 | Try 5 | Verdict |
+|---|---|---|---|---|---|---|---|
+| 1. A matching query completes all three tools | ≥4 of 5 | PASS | PASS | PASS | PASS | PASS | **MET (5/5)** |
+| 2. An impossible query stops before the second tool | 5 of 5 | PASS | PASS | PASS | PASS | PASS | **MET (5/5)** |
+| 3. The item the search picked is the item the card describes | 5 of 5 | PASS | PASS | PASS | PASS | PASS | **MET (5/5)** |
+| 4. Fit cards in-spec (2–4 sentences, price and platform once each) | ≥4 of 5 | PASS | PASS | PASS | PASS | PASS | **MET (5/5)** |
+| 4b. No two cards share an opening sentence | 5 of 5 | PASS | PASS | PASS | PASS | PASS | **MET (5/5)** |
+| 5. Outfit owned-only **and** no two outfits share an opening _(revised)_ | ≥4 of 5 | PASS | PASS | PASS | PASS | PASS | **MET (5/5)** |
+| looser retry fires _(diagnostic)_ | — | dropped XXS | dropped XXS | dropped XXS | dropped XXS | dropped XXS | n/a |
+| empty wardrobe _(diagnostic)_ | — | advice | advice | advice | advice | advice | n/a |
+| price branch fires _(diagnostic)_ | — | note | note | note | note | note | n/a |
+
+Scored by the same procedures: criterion 3's five cards each carry `$18` once
+and `depop` once; criterion 4's five Levi's cards are 3 sentences with `$38`
+once and `depop` once, 5 unique openings; criterion 5's outfits name only the
+tank top, khaki trousers, leather belt, combat boots, sneakers and denim
+jacket — all owned — with 5 unique openings of 5.
+
+**All three run logs side by side:**
+
+| Criterion | Before | After | After 2 |
+|---|---|---|---|
+| 1. three-tool run | MET 5/5 | MET 4/5 | **MET 5/5** |
+| 2. impossible query stops | MET 5/5 | MET 5/5 | MET 5/5 |
+| 3. item matches card | MET 5/5 | MET 5/5 | MET 5/5 |
+| 4 / 4b. card in-spec, unique openings | MET 5/5 | MET 5/5 | MET 5/5 |
+| 5. owned-only + variety _(revised measure)_ | MISSED 2/5 | MET 5/5 | MET 5/5 |
+
+**Did the second improvement help, and how do I know:** I cannot prove it from
+this run, and the honest answer is "no evidence either way, plus a passing
+forced test."
+
+Criterion 1 went from 4 of 5 to 5 of 5, which looks like the retry working.
+It isn't. **No 503 arrived during the after-2 run at all** — `grep` finds zero
+occurrences of `503`, `unavailable` or the `[transient]` notice in either the
+results file or the run's stderr. The retry never fired, so the criterion
+recovered because the provider happened to be healthy, not because of my
+change. Claiming the point here would be reading a provider's good afternoon as
+my own work.
+
+What I can show is that the path behaves, forced the way Milestone 2 forces the
+other failures. Fake client, `generate.py::generate`:
+
+```
+--- one 503 then success ---
+  [transient] model unavailable (503). Retrying once in 2s.
+result: retried and succeeded
+client calls: 2
+
+--- 503 every time ---
+raised ModelUnavailable after 2 client calls
+message: Couldn't reach the model: 503 UNAVAILABLE service unavailable
+
+--- bad key, not transient ---
+raised ModelUnavailable after 1 client call(s) — no retry
+```
+
+The third block is the one that matters for not breaking anything: an invalid
+key is not transient, so it still fails on the first attempt and the Milestone 2
+failure mode behaves exactly as recorded above. The cost of the change when it
+does fire is one extra request and a 2-second pause.
+
+So: the first improvement has a number behind it (2 of 5 to 5 of 5 on the
+mechanism it targeted). The second has a working forced test and no live
+evidence, because the failure it addresses did not occur again. Five tries
+cannot schedule someone else's outage.
+
+**One thing the after-2 table doesn't show.** Criterion 5 passes 5 of 5 on
+unique openings, but four of the five outfits still pair the bag with the tank
+top and the khaki trousers — the wording varies more than the pairing does.
+The shuffle changed what the model reads first; it did not make the wardrobe's
+neutral pieces any less obviously matched to a tan bag. The opening-sentence
+test is a proxy, and this is where the proxy shows its edge. The measure I'd
+use next is the set of garments named per try, compared across tries, which I
+have deliberately not switched to mid-comparison.
+
+---
+
 ## What's Still Broken
 
 No criterion is missed in either run, so this section is about what the table
