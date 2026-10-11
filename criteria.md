@@ -87,6 +87,22 @@ wording — if I wanted 5 of 5 I'd have to check the output in code and retry,
 which I haven't built. This is the failure that matters most here: advice naming
 clothes you don't have is worse than no advice.
 
+> **Revised in unit 4:** Given a non-empty wardrobe, every garment named in
+> `session["outfit_suggestion"]` appears in `wardrobe["items"]` **and** across
+> 5 tries on the same item no two outfits share an opening sentence — both in
+> at least 4 of 5 tries, scored the same way plus an exact-string comparison of
+> first sentences, split on `.!?`.
+>
+> **Why revised:** the original measured the wrong half of the output. It sets
+> a floor on correctness and no ceiling on repetition, so an agent that returns
+> one correct outfit forever scores 5 of 5 on it — which is exactly what
+> happened in the before run: five independent model calls at temperature 0.9
+> with caching off, and four of the five opened with the identical sentence.
+> The original line is unfalsifiable against the defect it was written to catch.
+> Criterion 4b already applies the opening-sentence test to fit cards; this
+> extends the same checkable test to outfits. The target stays at 4 of 5 —
+> revising the measure, not loosening the number.
+
 ---
 
 <!-- ─────────────────────────────────────────────────────────────────────────
