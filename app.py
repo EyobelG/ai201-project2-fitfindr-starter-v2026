@@ -118,6 +118,11 @@ def _ask_one(query, wardrobe, use_trace, remember=False):
         print(f"  {session['error']}")
     else:
         item = session["selected_item"] or {}
+        if session.get("retry_note"):
+            # The looser retry fired, so say so before showing the item —
+            # these results are not in the size that was asked for.
+            print(f"  Note:     {session['retry_note']}")
+            print()
         print(f"  Found:    {item.get('title')} — ${item.get('price')} on {item.get('platform')}")
         print()
         print(f"  Outfit:   {session['outfit_suggestion']}")

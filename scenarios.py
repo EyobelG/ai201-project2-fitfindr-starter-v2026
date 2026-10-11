@@ -69,6 +69,17 @@ SCENARIOS = [
         "criterion": 5,
     },
     {
+        # Diagnostic, not one of the five. The looser retry (stretch): the
+        # data holds Levi's 501s but none in XXS, so the first search comes
+        # back empty, the size filter is dropped, and the second search finds
+        # them. Here so the run log carries the retry and the constraint it
+        # dropped, five times over.
+        "name": "empty search retries without the size filter",
+        "query": "levi 501 denim size XXS",
+        "wardrobe": "example",
+        "criterion": None,
+    },
+    {
         # Diagnostic, not one of the five. The price branch firing, so the run
         # log holds evidence of the second branch under test conditions too.
         "name": "price branch fires",

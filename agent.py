@@ -90,6 +90,8 @@ def new_session(query: str, wardrobe: dict) -> dict:
         "wardrobe": wardrobe,        # the user's wardrobe
         "outfit_suggestion": None,   # what suggest_outfit returned
         "fit_card": None,            # what create_fit_card returned
+        "retry_dropped": None,       # the size filter dropped on a retry (stretch)
+        "retry_note": None,          # what to tell the user about that retry
         "error": None,               # set when the run ended early
     }
 
@@ -188,6 +190,41 @@ def run_agent(query: str, wardrobe: dict) -> dict:
             trace.step("search_listings (via MCP)", inputs=str(parsed),
                        returned=session["search_results"],
                        note=f"{len(session['search_results'])} match(es)")
+            # STRETCH: before the branch fires, try once more without the
+            # size filter. An empty search with a size in the parse has two
+            # possible causes and the message cannot tell them apart — the
+            # data holds nothing like this, or it holds it in other sizes.
+            # One more search separates them. The description and the price
+            # ceiling are kept; only the size is dropped.
+            if not session["search_results"] and session["parsed"].get("size"):
+                dropped = session["parsed"]["size"]
+                try:
+                    retry_results = call_tool("search_listings", {
+                        "description": parsed["description"],
+                        "size": None,
+                        "max_price": parsed["max_price"],
+                    })
+                except MCPError as exc:
+                    session["error"] = f"The listing search is unavailable: {exc}"
+                    trace.step("search_listings (retry, via MCP)",
+                               note="MCP call failed on the retry")
+                    return session
+                session["retry_dropped"] = dropped
+                trace.step("search_listings (retry, via MCP)",
+                           inputs=f"size dropped: {dropped!r}",
+                           returned=retry_results,
+                           note=f"{len(retry_results)} match(es) without the size filter")
+                if retry_results:
+                    session["search_results"] = retry_results
+                    session["retry_note"] = (
+                        f"Nothing matched in size {dropped}, so the size filter "
+                        f"was dropped and the search run again. What follows is "
+                        f"not in your size."
+                    )
+                    trace.step("branch",
+                               note=f"retry without size {dropped!r} found "
+                                    f"{len(retry_results)}: continuing")
+
             # THE BRANCH: nothing came back, so there is nothing to style.
             if not session["search_results"]:
                 session["error"] = _no_results_message(session["parsed"])
