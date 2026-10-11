@@ -416,6 +416,55 @@ needing the `{"result": ...}` unwrapping a bare value needs.
 Evidence: **Unit 4 stretch — `compare_prices` over MCP** below.
 
 
+### Unit 4 stretch — retry an empty search with looser constraints
+
+Declared here before I built it.
+
+Right now an empty search is terminal: the branch fires, the user gets a
+message naming what to change, and the run stops. That message is useful and
+the branch is correct, but it hands the work back to the user when the agent
+could do one obvious thing first.
+
+What changes: when `search_listings` returns `[]` **and** the parse found a
+size filter, the loop retries the search once with `size=None`, keeping the
+description and the price ceiling. If the retry finds something, the run
+continues and the session records that the size filter was dropped, so the
+message the user sees names the constraint that was in the way. If the retry
+also comes back empty, or there was no size filter to drop, the existing
+branch fires unchanged.
+
+What should not change: the branch itself. A query that matches nothing for
+reasons other than size still stops before `suggest_outfit`, which is what
+criterion 2 measures. The retry is one extra search call on a path that
+currently makes none, and the loop can still only go round a bounded number of
+times.
+
+Evidence: **Unit 4 stretch — the looser retry** below.
+
+
+### Unit 4 stretch — a second measured improvement
+
+Declared here before I built it.
+
+The first improvement came from the outfit-collapse diagnosis. This one comes
+from the other failure the after run produced: criterion 1 scored 4 of 5
+because try 1 hit a provider `503 UNAVAILABLE` at the `suggest_outfit` step.
+The handler caught it and the message was fine, but the run was thrown away
+over a failure the provider itself calls temporary — the response body says
+"Spikes in demand are usually temporary. Please try again later."
+
+What changes: `generate()` retries a `ModelUnavailable` once after a short
+backoff before raising. One retry, not a loop. If the retry fails the existing
+`ModelUnavailable` handlers in `agent.py` run exactly as they do now.
+
+How it is measured: a third full run, `python run_eval.py --label after2`,
+five criteria at five tries, in the same table format as the other two, plus a
+forced-failure test of the retry path — because a 503 arriving on its own is
+not something I can schedule.
+
+Evidence: **Run Log — After 2** below.
+
+
 ### Stretch 1 — the fourth tool in a run
 
 `compare_prices` on its own, covering the dear case, the cheap case and the
