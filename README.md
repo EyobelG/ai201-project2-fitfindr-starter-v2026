@@ -306,6 +306,36 @@ outfit returns the fixed string without making a model call.
   case into the spec first is why I caught the `None` instead of debugging the
   branch later.
 
+**Moment 3 — unit 4: I had it argue against my own verdict**
+
+- *What I asked for:* the Milestone 4 prompt, aimed at criterion 5. I pasted
+  the criterion, the target, the five before-run outfits and my verdict of MET
+  (5 of 5), and asked it to argue the opposite verdict as strongly as it could.
+- *What came back:* it could not argue MISSED, because on the criterion as
+  written 5 of 5 is simply correct — every garment named is owned. What it
+  argued instead was that the criterion was the wrong one: four of the five
+  outfits were the same outfit, and a criterion that scores an agent 5 of 5 for
+  returning one answer five times is measuring the wrong half of the output.
+- *What I changed:* this is the diagnosis the whole improvement works from. I
+  revised criterion 5 in `criteria.md` — original left in place, revision
+  underneath — to add the opening-sentence test that criterion 4b already
+  applied to fit cards, and kept the target at 4 of 5 so the measure changed and
+  the number did not.
+
+**Moment 4 — unit 4: it proposed the fix I could not use**
+
+- *What I asked for:* given the collapse, what to change in
+  `tools.py::suggest_outfit`.
+- *What came back:* add "vary your suggestion between runs; do not repeat a
+  previous pairing" to the system prompt.
+- *What I changed:* nothing, because that instruction cannot work here — the
+  five tries are five independent calls with no shared state, so there is no
+  previous pairing for any one call to avoid. It pointed at the right function
+  and the wrong lever. What acts on a single call is what the model reads first,
+  which is how I landed on shuffling the wardrobe order instead. Worth
+  recording as a case where the suggestion was plausible, specific, and would
+  have measured as a null result.
+
 
 ---
 
@@ -1053,13 +1083,36 @@ target; it is a gap in what the targets measure.
 
 | # | Criterion | Target | Verdict | How I decided |
 |---|---|---|---|---|
-| 1 |  |  |  |  |
-| 2 |  |  |  |  |
-| 3 |  |  |  |  |
-| 4 |  |  |  |  |
-| 5 |  |  |  |  |
+| 1 | A matching query completes all three tools | ≥4 of 5 | **MET (5/5)** | `stopped early: no` in the trace, plus both an outfit block and a fit card present in the output. All five tries had all three. |
+| 2 | An impossible query stops before the second tool | 5 of 5 | **MET (5/5)** | `stopped early: yes`, and no `suggest_outfit` step anywhere in the trace. All five traces end at `[3] branch`. |
+| 3 | The item the search picked is the item the card describes | 5 of 5 | **MET (5/5)** | Compared the title at `[2] search_listings` position 0 against the title at `[3] select_item`, then checked the card for that item's price and platform. `$18` and `depop` appear in all five cards. |
+| 4 | Fit cards in-spec (2–4 sentences, price and platform once each) | ≥4 of 5 | **MET (5/5)** | Sentences counted on `.!?`, then counted occurrences of `$38` and `depop`. Every card: exactly 3 sentences, one mention each. Openings compared as exact strings — 5 unique of 5 (criterion 4b). |
+| 5 | The outfit never names a garment the user doesn't own | ≥4 of 5 | **MET (5/5)** | Read by hand — "is this garment owned" is not a string match. The five outfits name the white ribbed tank top, the wide-leg khaki trousers, the baggy straight-leg jeans and the chunky white sneakers; all four are in `data/wardrobe.json`. Nothing invented. |
 
 **Diagnoses**
+
+No criterion missed, so there is no miss to diagnose. Writing "all five met,
+nothing to report" here would be the wrong read of the run, though — the run has
+a real defect that the table is structurally unable to fail on, and that is what
+the improvement below works from.
+
+**Where it happened:** the model's output, not a tool and not the loop's branch.
+Every tool returned what it promised and the branch fired correctly on all seven
+scenarios.
+
+**The mechanism:** `suggest_outfit` sends the whole wardrobe as one flat list in
+a single prompt with no instruction to vary the pairing, and the model picks the
+first plausible combination — which is the same combination every time. Caching
+was off and temperature was 0.9, so tries 2–5 are four independent model calls
+that converged on one identical opening sentence. Criterion 4b checks exactly
+this collapse for fit cards and caught nothing because the card prompt names a
+different listing each time; no criterion checks it for outfits, so the outfit
+collapse passes 5/5 while being the most obvious thing wrong with the output.
+
+**The pattern:** criterion 5 ("never names a garment the user doesn't own") sets
+a floor on correctness and no ceiling on variety. An agent that returns the same
+correct outfit forever scores 5/5 on it. That is a gap in what I chose to
+measure in unit 3, not a tool failure.
 
 
 
@@ -1176,21 +1229,116 @@ treatment `ModelUnavailable` now gets.
 
      `python run_eval.py --label after` -->
 
-**What I changed:**
+**What I changed:** one line and a shuffle in `tools.py::suggest_outfit`. The
+wardrobe used to be formatted into the prompt in `data_loader` order, the same
+order on every call; it is now shuffled per call:
 
-**Which failure it was meant to fix:**
+```python
+shuffled = list(items)
+random.shuffle(shuffled)
+owned = "\n".join(... for i in shuffled)
+```
+
+Nothing else moved. The system prompt is the same wording, the model is the
+same, the temperature is still 0.9, the wardrobe contents are identical, and
+`create_fit_card` was not touched.
+
+**Which failure it was meant to fix:** the outfit collapse diagnosed above —
+five independent model calls returning one outfit, four of them word for word.
+The diagnosis said the model takes the first plausible pairing off the top of a
+list it reads in a fixed order, so the thing to change was the order, not the
+instruction. Telling a model to "vary your answer" cannot work here: each of the
+five calls is independent and none of them can see the other four, so there is
+nothing for it to vary *from*. Changing what it reads first is the only lever
+that acts on a single call.
 
 ### Run Log — After
 
+`python run_eval.py --label after` — same 7 scenarios, 5 tries each, caching
+off, temperature 0.9, 60 model calls. Full output in
+`results/run_2026-10-11_1331_after.md`, committed alongside this file.
+
 | Criterion | Target | Try 1 | Try 2 | Try 3 | Try 4 | Try 5 | Verdict |
 |---|---|---|---|---|---|---|---|
-| 1.  |  |  |  |  |  |  |  |
-| 2.  |  |  |  |  |  |  |  |
-| 3.  |  |  |  |  |  |  |  |
-| 4.  |  |  |  |  |  |  |  |
-| 5.  |  |  |  |  |  |  |  |
+| 1. A matching query completes all three tools | ≥4 of 5 | FAIL | PASS | PASS | PASS | PASS | **MET (4/5)** |
+| 2. An impossible query stops before the second tool | 5 of 5 | PASS | PASS | PASS | PASS | PASS | **MET (5/5)** |
+| 3. The item the search picked is the item the card describes | 5 of 5 | PASS | PASS | PASS | PASS | PASS | **MET (5/5)** |
+| 4. Fit cards in-spec (2–4 sentences, price and platform once each) | ≥4 of 5 | PASS | PASS | PASS | PASS | PASS | **MET (5/5)** |
+| 4b. No two cards share an opening sentence | 5 of 5 | PASS | PASS | PASS | PASS | PASS | **MET (5/5)** |
+| 5. Outfit names only owned garments, and no two outfits share an opening sentence _(revised, unit 4)_ | ≥4 of 5 | PASS | PASS | PASS | PASS | PASS | **MET (5/5)** |
+| empty wardrobe _(diagnostic — not one of the five)_ | — | advice | advice | advice | advice | advice | n/a |
+| price branch fires _(diagnostic — not one of the five)_ | — | note | note | note | note | note | n/a |
 
-**Did it help, and how do I know:**
+How each column was decided — same procedures as the before run:
+
+- **1** — try 1 is the one FAIL in the whole table, and it is not the
+  improvement. The model returned `503 UNAVAILABLE` ("This model is currently
+  experiencing high demand") at the `suggest_outfit` step, the
+  `ModelUnavailable` handler caught it, and the run stopped with no outfit and
+  no fit card. Tries 2–5 completed all seven steps. 4 of 5 against a target of
+  ≥4 of 5 — met, and met by exactly one try, which is as thin as a pass gets.
+- **2** — `stopped early: yes`, no `suggest_outfit` step, all five traces end at
+  `[3] branch`.
+- **3** — position 0 of `[2] search_listings` equals `[3] select_item` in all
+  five, and `$18` and `depop` each appear exactly once per card, counted in
+  code.
+- **4** — all five Levi's cards came out at exactly 3 sentences with `$38` once
+  and `depop` once. Openings compared as exact strings: 5 unique of 5.
+- **5** — garments read by hand against `data/wardrobe.json`: the five outfits
+  name the white ribbed tank top, wide-leg khaki trousers, black combat boots,
+  brown leather belt, chunky white sneakers, oversized grey crewneck sweatshirt
+  and baggy straight-leg jeans. All seven are owned; nothing invented. Opening
+  sentences split on `.!?` and compared exactly: **5 unique of 5**, against 2
+  unique of 5 before.
+
+**Real output — the thing the improvement was aimed at.** Both blocks are the
+`outfit_suggestion` field from the criterion 5 scenario (`tan leather mini
+shoulder bag`, `agent.py::run_agent` step `[6] suggest_outfit`, produced by
+`tools.py::suggest_outfit`).
+
+Before, tries 2 and 4 — and tries 3 and 5 — opened identically:
+
+```
+Pair the Mini Shoulder Bag with the White ribbed tank top and Wide-leg khaki
+trousers for an effortless, neutral-toned look.
+```
+
+After, try 3 reads:
+
+```
+Pair this vintage tan leather mini shoulder bag with the oversized grey
+crewneck sweatshirt and baggy straight-leg jeans, finishing the look with the
+chunky white sneakers for a casual streetwear vibe. Alternatively, style it
+alongside the white ribbed tank top tucked into the wide-leg khaki trousers,
+accented by the brown leather belt and black combat boots.
+```
+
+**Did it help, and how do I know:** yes, on the thing it was aimed at, and the
+number is unambiguous. Unique outfit openings across five tries, same scenario,
+same wardrobe, cache off both runs:
+
+| Scenario | Before | After |
+|---|---|---|
+| outfit names only owned garments (criterion 5) | 2 of 5 | **5 of 5** |
+| price branch fires | 3 of 5 | **5 of 5** |
+| matching query completes | 4 of 5 | 4 of 4 _(try 1 never reached the step)_ |
+| empty wardrobe | 2 of 5 | 4 of 5 |
+
+The variety came without a correctness cost: still 0 invented garments across
+all five tries, and the pieces named got *more* varied rather than looser — the
+grey crewneck and the baggy jeans appear in the after run and in none of the
+before outfits.
+
+Two honest qualifications. First, criterion 1 dropped from 5 of 5 to 4 of 5,
+and that has nothing to do with the shuffle: a 503 from the provider at the
+`suggest_outfit` step is the same upstream failure I triggered on purpose in
+Milestone 2, arriving on its own this time. The handler did its job, which is
+the only part of it my code controls. Second, the empty-wardrobe path improved
+to 4 of 5 even though the shuffle cannot touch it — that branch has no wardrobe
+to shuffle. That one is variance, not my change, and it is a useful reminder
+that a single before/after pair at five tries cannot separate a small real
+effect from noise. The criterion 5 result is 2 of 5 to 5 of 5 on the exact
+mechanism the diagnosis named, which is why I believe that one.
 
 <!-- If it made things worse, say that. Honestly reported, that earns full
      credit and is more interesting than one that worked. -->
@@ -1201,9 +1349,54 @@ treatment `ModelUnavailable` now gets.
 
 ## What's Still Broken
 
-<!-- For each criterion still missed: what you'd do, and why you stopped where
-     you did. "I ran out of time" is fine if it's true. Pretending nothing is
-     left is not. -->
+No criterion is missed in either run, so this section is about what the table
+does not catch rather than what it reports.
+
+**1. Criterion 1 passed on 4 of 5 and I do not control the fifth.** The one
+FAIL in the after run is a provider 503 at the `suggest_outfit` step. My target
+of ≥4 of 5 was written for phrasing variance in the keyword search, not for
+upstream outages, so the number it produced is right by accident. What I would
+do: retry once on `ModelUnavailable` with a short backoff before surfacing the
+message, and count a retried success as a pass. I stopped short because a retry
+changes the loop, and the unit allows exactly one change — the shuffle is it.
+
+**2. The search is still keyword overlap, and criterion 1's target admits it.**
+"jumper", "sweater" and "trainers" all return zero against data holding two
+crewnecks, a cardigan and four pairs of shoes. 4 of 5 is a target written
+around a known weakness rather than one that tests it. What I would do: a
+synonym table for the dozen garment words in this dataset — not embeddings,
+which would be a new dependency for 40 listings. I stopped because fixing the
+tool and then scoring the criterion that was loosened for it in the same unit
+would leave me unable to say which of the two moved the number.
+
+**3. Two bugs I found and deliberately did not fix, for the same reason.** Both
+are real and both are out of scope under the one-change rule:
+
+- `agent.py::_PRICE_RE` only parses a price with a literal `$`, so "under 30
+  dollars" and "max 30" set `max_price` to `None` and the ceiling is silently
+  dropped. No criterion tests a price ceiling, which is why five runs never
+  surfaced it.
+- `tools.py::search_listings` scores on description keywords, and a
+  filters-only query ("size M under $25", no garment words) scores every
+  listing at zero and returns `[]`. The empty-search branch then fires
+  correctly on a query that should have matched, so criterion 2 passes for the
+  wrong reason.
+
+**4. Criterion 5's variety half is measured on one scenario.** The revised
+criterion counts unique opening sentences across five tries of *one* item. It
+went 2 of 5 to 5 of 5, which is why I trust the direction, but an opening
+sentence is a proxy for variety and a shuffle could in principle produce five
+differently-worded descriptions of the same pairing. A stronger measure is the
+set of garments named per try, compared across tries. I did not switch to it
+because changing the measure between the before and after runs would make the
+comparison worthless; it is the first thing I would tighten next unit.
+
+**5. Five tries cannot separate a small effect from noise.** The
+empty-wardrobe path improved from 2 of 5 to 4 of 5 unique openings, and the
+shuffle provably cannot affect it — that branch has no wardrobe to shuffle. So
+I know, from inside my own results, that a two-step move at n=5 can be pure
+variance. The criterion 5 result is believable because the mechanism is named
+and the jump is to 5 of 5, not because the sample is adequate.
 
 
 
